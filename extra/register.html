@@ -1,0 +1,1996 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Register - ISU Visa Management System</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    :root {
+      --primary-blue: #0e2a47;     /* dark blue */
+      --secondary-blue: #1a5276;   /* deep blue */
+      --dark-blue: #0b1f33;        /* darker navy */
+      --light-blue: #e8f4fd;
+      --accent-green: #2ecc71;
+      --accent-red: #e74c3c;
+      --text-gray: #3E3E3E;
+      --border-gray: #E0E0E0;
+
+      /* button mix */
+      --btn-black: #0b0f14;
+      --btn-navy: #0e2a47;
+    }
+
+    body {
+      font-family: 'Poppins', sans-serif;
+      color: var(--text-gray);
+      min-height: 100vh;
+      padding: 20px;
+      position: relative;
+    }
+
+    /* Background image */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url('https://ace-sedi.aiu.edu.my/cfgs%20pic.jpg');
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-attachment: fixed;
+      opacity: 0.35;
+      z-index: -2;
+    }
+
+    /* Overlay (as requested) */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.001);
+      z-index: -1;
+    }
+
+    /* Language switcher */
+    .language-switcher {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      z-index: 10;
+    }
+
+    .visa-container {
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 2.5rem;
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 20px;
+      box-shadow: 0 25px 50px rgba(0,0,0,0.2);
+      position: relative;
+      overflow: hidden;
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+    }
+
+    .visa-header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+      position: relative;
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 15px;
+      margin-bottom: 1.5rem;
+    }
+
+    .logo-img {
+      width: 64px;
+      height: 64px;
+      object-fit: contain;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(0,0,0,0.06);
+      box-shadow: 0 8px 18px rgba(0,0,0,0.08);
+      padding: 8px;
+    }
+
+    .logo-text {
+      font-family: 'Playfair Display', serif;
+      font-weight: 700;
+      color: var(--dark-blue);
+      font-size: 2.2rem;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin: 0;
+    }
+
+    .logo-subtitle {
+      color: var(--text-gray);
+      opacity: 0.85;
+      font-size: 1.1rem;
+      margin-top: 0.5rem;
+      margin-bottom: 0;
+    }
+
+    .progress-steps {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 2.5rem;
+      position: relative;
+    }
+
+    .progress-steps::before {
+      content: '';
+      position: absolute;
+      top: 25px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--border-gray);
+      z-index: 1;
+    }
+
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      z-index: 2;
+      flex: 1;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .step-number {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: white;
+      border: 3px solid var(--border-gray);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 1.2rem;
+      color: var(--text-gray);
+      margin-bottom: 10px;
+      transition: all 0.3s ease;
+    }
+
+    .step.active .step-number {
+      background: var(--primary-blue);
+      border-color: var(--primary-blue);
+      color: white;
+      transform: scale(1.1);
+    }
+
+    .step.completed .step-number {
+      background: var(--accent-green);
+      border-color: var(--accent-green);
+      color: white;
+    }
+
+    .step-label {
+      font-size: 0.9rem;
+      color: var(--text-gray);
+      font-weight: 500;
+      text-align: center;
+      max-width: 120px;
+    }
+
+    .form-section {
+      background: #f8fafc;
+      padding: 2rem;
+      border-radius: 15px;
+      margin-bottom: 1.5rem;
+      border-left: 4px solid var(--primary-blue);
+      transition: transform 0.3s ease;
+    }
+
+    .form-section:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .section-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--primary-blue);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      margin-right: 15px;
+      font-size: 1.2rem;
+    }
+
+    .section-title {
+      color: var(--dark-blue);
+      font-weight: 600;
+      font-size: 1.5rem;
+      margin: 0;
+    }
+
+    .form-control {
+      padding: 0.85rem 1.25rem;
+      border-radius: 12px;
+      border: 2px solid var(--border-gray);
+      transition: all 0.3s ease;
+      font-size: 1rem;
+    }
+
+    .form-control:focus {
+      border-color: var(--primary-blue);
+      box-shadow: 0 0 0 0.25rem rgba(14, 42, 71, 0.14);
+    }
+
+    .form-label {
+      font-weight: 600;
+      color: var(--dark-blue);
+      margin-bottom: 0.5rem;
+      font-size: 0.95rem;
+    }
+
+    .required::after {
+      content: " *";
+      color: var(--accent-red);
+    }
+
+    .input-group-text {
+      background: white;
+      border: 2px solid var(--border-gray);
+      color: var(--text-gray);
+      font-size: 1.1rem;
+      transition: all 0.3s ease;
+    }
+
+    .input-group .form-control { border-left: none; }
+    .input-group .input-group-text { border-right: none; }
+
+    .password-meter {
+      height: 6px;
+      background: var(--border-gray);
+      border-radius: 3px;
+      margin-top: 0.5rem;
+      overflow: hidden;
+    }
+
+    .password-meter-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 3px;
+      transition: all 0.3s ease;
+    }
+
+    .password-rules {
+      font-size: 0.85rem;
+      color: #666;
+      margin-top: 0.5rem;
+    }
+
+    .password-rule {
+      display: flex;
+      align-items: center;
+      margin-bottom: 0.25rem;
+    }
+
+    .password-rule i {
+      margin-right: 0.5rem;
+      font-size: 0.75rem;
+    }
+
+    .password-rule.valid { color: var(--accent-green); }
+    .password-rule.invalid { color: var(--accent-red); }
+
+    .step-buttons {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 2rem;
+      padding-top: 2rem;
+      border-top: 2px solid var(--border-gray);
+    }
+
+    .btn-step {
+      padding: 0.75rem 2rem;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 1.1rem;
+      transition: all 0.25s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      min-width: 150px;
+    }
+
+    /* Dark blue + black buttons */
+    .btn-next {
+      background: linear-gradient(135deg, var(--btn-navy), var(--btn-black));
+      color: white;
+      border: none;
+    }
+
+    .btn-next:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(11, 15, 20, 0.25);
+      filter: brightness(1.05);
+    }
+
+    .btn-prev {
+      background: linear-gradient(135deg, #ffffff, #f2f4f7);
+      color: var(--dark-blue);
+      border: 2px solid rgba(11, 15, 20, 0.15);
+    }
+
+    .btn-prev:hover {
+      background: linear-gradient(135deg, #ffffff, #eef2f6);
+      border-color: rgba(14, 42, 71, 0.35);
+    }
+
+    .btn-submit {
+      background: linear-gradient(135deg, var(--btn-navy), #000000);
+      color: white;
+      border: none;
+      width: 100%;
+      padding: 1rem;
+      font-size: 1.2rem;
+      font-weight: 600;
+      border-radius: 12px;
+      transition: all 0.25s ease;
+    }
+
+    .btn-submit:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(11, 15, 20, 0.25);
+      filter: brightness(1.05);
+    }
+
+    .file-upload-container {
+      border: 2px dashed var(--border-gray);
+      border-radius: 12px;
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .file-upload-container:hover {
+      border-color: var(--primary-blue);
+      background: var(--light-blue);
+    }
+
+    .file-upload-container.drag-over {
+      border-color: var(--accent-green);
+      background: rgba(46, 204, 113, 0.1);
+    }
+
+    .file-preview {
+      width: 120px;
+      height: 120px;
+      border-radius: 10px;
+      object-fit: cover;
+      margin-bottom: 1rem;
+      border: 3px solid white;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .terms-checkbox {
+      background: white;
+      padding: 1.5rem;
+      border-radius: 12px;
+      border: 2px solid var(--border-gray);
+    }
+
+    .terms-content {
+      max-height: 200px;
+      overflow-y: auto;
+      padding: 1rem;
+      background: #f8f9fa;
+      border-radius: 8px;
+      margin: 1rem 0;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .step-content { display: none; }
+    .step-content.active {
+      display: block;
+      animation: fadeIn 0.5s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .alert-custom {
+      border-radius: 12px;
+      border: none;
+      padding: 1rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .alert-danger {
+      background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+      color: white;
+    }
+
+    .alert-success {
+      background: linear-gradient(135deg, #51cf66, #40c057);
+      color: white;
+    }
+
+    .is-invalid { border-color: var(--accent-red) !important; }
+    .is-invalid:focus {
+      box-shadow: 0 0 0 0.25rem rgba(231, 76, 60, 0.25) !important;
+    }
+
+    .university-watermark {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      font-size: 0.8rem;
+      color: rgba(0, 0, 0, 0.22);
+      font-style: italic;
+      z-index: 1;
+    }
+
+    /* LC hint */
+    #lcHint { display: none; }
+
+    @media (max-width: 768px) {
+      body { padding: 10px; background-attachment: scroll; }
+      .visa-container { padding: 1.5rem; margin: 1rem auto; }
+      .progress-steps { flex-direction: column; gap: 20px; }
+      .progress-steps::before { display: none; }
+      .step { flex-direction: row; gap: 15px; justify-content: flex-start; }
+      .step-label { text-align: left; max-width: none; }
+      .step-buttons { flex-direction: column; gap: 15px; }
+      .btn-step { width: 100%; }
+      .university-watermark { display: none; }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Language Switcher -->
+  <div class="language-switcher">
+    <select id="langSelect" class="form-select form-select-sm" style="width:auto;">
+      <option value="en">English</option>
+      <option value="ms">Bahasa Melayu</option>
+      <option value="id">Bahasa Indonesia</option>
+      <option value="my">မြန်မာ</option>
+      <option value="ar">العربية</option>
+      <option value="si">සිංහල</option>
+      <option value="ta">தமிழ்</option>
+    </select>
+  </div>
+
+  <div class="container">
+    <div class="visa-container">
+
+      <div class="visa-header">
+        <div class="logo-container">
+          <img
+            src="logo.png"
+            alt="ISU Logo"
+            class="logo-img"
+            onerror="this.style.display='none'; document.getElementById('logoFallback').style.display='flex';"
+          />
+          <div id="logoFallback" class="d-none" style="width:64px;height:64px;border-radius:12px;background:#0e2a47;align-items:center;justify-content:center;color:#fff;font-size:28px;">
+            <i class="bi bi-passport"></i>
+          </div>
+
+          <div>
+            <h1 class="logo-text" data-i18n="brand_title">ISU Visa Management</h1>
+            <p class="logo-subtitle" data-i18n="brand_subtitle">Secure Student Visa Registration Portal</p>
+          </div>
+        </div>
+
+        <div class="progress-steps">
+          <div class="step active" data-step="1">
+            <div class="step-number">1</div>
+            <div class="step-label" data-i18n="step1">Personal Info</div>
+          </div>
+          <div class="step" data-step="2">
+            <div class="step-number">2</div>
+            <div class="step-label" data-i18n="step2">Academic Info</div>
+          </div>
+          <div class="step" data-step="3">
+            <div class="step-number">3</div>
+            <div class="step-label" data-i18n="step3">Documents</div>
+          </div>
+          <div class="step" data-step="4">
+            <div class="step-number">4</div>
+            <div class="step-label" data-i18n="step4">Account Setup</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="alert-container"></div>
+
+      <!-- Step 1 -->
+      <div class="step-content active" id="step1">
+        <div class="form-section">
+          <div class="section-header">
+            <div class="section-icon"><i class="bi bi-person-circle"></i></div>
+            <h2 class="section-title" data-i18n="personal_title">Personal Information</h2>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label for="name" class="form-label required" data-i18n="label_fullname">Full Name</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-person"></i></span>
+                <input type="text" class="form-control" id="name" name="name" data-i18n-ph="ph_fullname" placeholder="Enter your full name" required>
+              </div>
+            </div>
+
+            <div class="col-md-6">
+              <label for="date_of_birth" class="form-label required" data-i18n="label_dob">Date of Birth</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-calendar"></i></span>
+                <input type="date" class="form-control" id="date_of_birth" name="date_of_birth" required>
+              </div>
+            </div>
+
+            <div class="col-md-6">
+              <label for="phone_number" class="form-label required" data-i18n="label_phone">Phone Number</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-phone"></i></span>
+                <input type="tel" class="form-control" id="phone_number" name="phone_number" data-i18n-ph="ph_phone" placeholder="01123456789" required>
+              </div>
+            </div>
+
+            <div class="col-md-6">
+              <label for="email" class="form-label required" data-i18n="label_email">Student Email</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                <input type="email" class="form-control" id="email" name="email" data-i18n-ph="ph_email" placeholder="your@student.aiu.edu.my" required>
+              </div>
+              <small class="text-muted" data-i18n="email_hint">Only @student.aiu.edu.my emails accepted</small>
+            </div>
+
+            <div class="col-md-6">
+              <label for="country" class="form-label required" data-i18n="label_country">Country</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-globe"></i></span>
+                <select class="form-control" id="country" name="country" required>
+                  <option value="" data-i18n="select_country">Select Country</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="col-md-6">
+              <label for="gender" class="form-label required" data-i18n="label_gender">Gender</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-gender-ambiguous"></i></span>
+                <select class="form-control" id="gender" name="gender" required>
+                  <option value="" data-i18n="select_gender">Select Gender</option>
+                  <option value="Male" data-i18n="gender_male">Male</option>
+                  <option value="Female" data-i18n="gender_female">Female</option>
+                  <!-- ✅ Removed "Other" -->
+                </select>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="step-buttons">
+          <div></div>
+          <button type="button" class="btn btn-step btn-next" onclick="nextStep()">
+            <span data-i18n="btn_next">Next</span> <i class="bi bi-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="step-content" id="step2">
+        <div class="form-section">
+          <div class="section-header">
+            <div class="section-icon"><i class="bi bi-mortarboard"></i></div>
+            <h2 class="section-title" data-i18n="academic_title">Academic Information</h2>
+          </div>
+
+          <div class="row g-3">
+
+            <!-- Department -->
+            <div class="col-md-6">
+              <label for="department" class="form-label required" data-i18n="label_dept">Department</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-building"></i></span>
+                <select class="form-control" id="department" name="department" required>
+                  <option value="" data-i18n="select_dept">Select Department</option>
+
+                  <option value="School Of Business & Social Sciences" data-i18n="dept_bss">School of Business & Social Sciences</option>
+                  <option value="School Of Education & Human Sciences" data-i18n="dept_ed">School of Education & Human Sciences</option>
+                  <option value="School Of Computing and Informatics" data-i18n="dept_ci">School of Computing and Informatics</option>
+                  <option value="Centre for Foundation and General Studies" data-i18n="dept_cfgs">Centre for Foundation and General Studies</option>
+
+                  <!-- LC -->
+                  <option value="Language Centre (LC)" data-i18n="dept_lc">Language Centre (LC)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Program -->
+            <div class="col-md-6">
+              <label for="program_of_study" class="form-label required" data-i18n="label_program">Program of Study</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-journal"></i></span>
+                <select class="form-control" id="program_of_study" name="program_of_study" required>
+                  <option value="" data-i18n="select_program">Select Program</option>
+                </select>
+              </div>
+              <small id="lcHint" class="text-muted" data-i18n="lc_hint">No program selection is required for Language Centre (LC).</small>
+            </div>
+
+            <div class="col-md-6">
+              <label for="intake" class="form-label required" data-i18n="label_intake">Intake</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-calendar-event"></i></span>
+                <select class="form-control" id="intake" name="intake" required>
+                  <option value="" data-i18n="select_intake">Select Intake</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="col-md-6">
+              <label for="expected_graduation_year" class="form-label required" data-i18n="label_grad">Expected Graduation</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-award"></i></span>
+                <select class="form-control" id="expected_graduation_year" name="expected_graduation_year" required>
+                  <option value="" data-i18n="select_grad">Select Graduation</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="col-md-12">
+              <div class="alert alert-info alert-custom">
+                <i class="bi bi-info-circle me-2"></i>
+                <strong data-i18n="note_strong">Note:</strong>
+                <span data-i18n="note_text">Your academic information will be verified with the university records.</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="step-buttons">
+          <button type="button" class="btn btn-step btn-prev" onclick="prevStep()">
+            <i class="bi bi-arrow-left"></i> <span data-i18n="btn_prev">Previous</span>
+          </button>
+          <button type="button" class="btn btn-step btn-next" onclick="nextStep()">
+            <span data-i18n="btn_next">Next</span> <i class="bi bi-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="step-content" id="step3">
+        <div class="form-section">
+          <div class="section-header">
+            <div class="section-icon"><i class="bi bi-folder"></i></div>
+            <h2 class="section-title" data-i18n="docs_title">Document Upload</h2>
+          </div>
+
+          <div class="row g-4">
+            <div class="col-md-12">
+              <label class="form-label required" data-i18n="label_profilepic">Profile Picture</label>
+              <div class="file-upload-container" id="profileUpload">
+                <i class="bi bi-camera" style="font-size: 2.5rem; color: #666; margin-bottom: 1rem;"></i>
+                <p class="mb-2"><strong data-i18n="upload_click">Click to upload or drag & drop</strong></p>
+                <p class="text-muted mb-3" data-i18n="upload_types">JPG, PNG or WEBP (Max 1MB)</p>
+                <img id="profilePreview" class="file-preview d-none" alt="Profile Preview">
+                <input type="file" class="d-none" id="profile_pic" name="profile_pic" accept=".jpg,.jpeg,.png,.webp">
+              </div>
+              <small class="text-danger mt-2 d-block" data-i18n="photo_own">* Please upload your own photo only</small>
+            </div>
+
+            <div class="col-12">
+              <div class="alert alert-warning alert-custom">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                <strong data-i18n="important_strong">Important:</strong>
+                <span data-i18n="important_text">Please make sure your uploaded photo is clear and matches your official identity.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step-buttons">
+          <button type="button" class="btn btn-step btn-prev" onclick="prevStep()">
+            <i class="bi bi-arrow-left"></i> <span data-i18n="btn_prev">Previous</span>
+          </button>
+          <button type="button" class="btn btn-step btn-next" onclick="nextStep()">
+            <span data-i18n="btn_next">Next</span> <i class="bi bi-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 4 -->
+      <div class="step-content" id="step4">
+        <div class="form-section">
+          <div class="section-header">
+            <div class="section-icon"><i class="bi bi-shield-lock"></i></div>
+            <h2 class="section-title" data-i18n="security_title">Account Security</h2>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label for="password" class="form-label required" data-i18n="label_password">Password</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                <input type="password" class="form-control" id="password" name="password" data-i18n-ph="ph_password" placeholder="Create a strong password" required>
+                <span class="input-group-text" id="togglePassword" style="cursor: pointer;">
+                  <i class="bi bi-eye-slash"></i>
+                </span>
+              </div>
+
+              <div class="password-meter mt-2">
+                <div class="password-meter-fill" id="passwordStrengthBar"></div>
+              </div>
+
+              <div class="password-rules mt-3">
+                <div class="password-rule" id="ruleLength">
+                  <i class="bi bi-circle"></i>
+                  <span data-i18n="pw_rule_len">At least 8 characters</span>
+                </div>
+                <div class="password-rule" id="ruleNumber">
+                  <i class="bi bi-circle"></i>
+                  <span data-i18n="pw_rule_num">Contains numbers</span>
+                </div>
+                <div class="password-rule" id="ruleSpecial">
+                  <i class="bi bi-circle"></i>
+                  <span data-i18n="pw_rule_special">Contains special character</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-md-6">
+              <label for="confirm_password" class="form-label required" data-i18n="label_confirm_password">Confirm Password</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+                <input type="password" class="form-control" id="confirm_password" name="confirm_password" data-i18n-ph="ph_confirm_password" placeholder="Re-enter your password" required>
+                <span class="input-group-text" id="toggleConfirmPassword" style="cursor: pointer;">
+                  <i class="bi bi-eye-slash"></i>
+                </span>
+              </div>
+              <div id="passwordMatch" class="mt-2"></div>
+            </div>
+
+            <div class="col-12">
+              <div class="terms-checkbox">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="terms" required>
+                  <label class="form-check-label" for="terms">
+                    <strong data-i18n="terms_agree">I agree to the Terms and Conditions</strong>
+                  </label>
+                </div>
+
+                <div class="terms-content mt-2">
+                  <p data-i18n="terms_intro">By registering for the ISU Visa Management System, you agree to:</p>
+                  <ol>
+                    <li data-i18n="terms_1">Provide accurate and truthful information</li>
+                    <li data-i18n="terms_2">Use the system only for legitimate visa application purposes</li>
+                    <li data-i18n="terms_3">Keep your login credentials secure and confidential</li>
+                    <li data-i18n="terms_4">Comply with all university policies and regulations</li>
+                    <li data-i18n="terms_5">Allow the university to verify your submitted information</li>
+                    <li data-i18n="terms_6">Receive communication regarding your visa application status</li>
+                  </ol>
+                  <p data-i18n="terms_outro">All information provided will be handled in accordance with our Privacy Policy and Data Protection regulations.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step-buttons">
+          <button type="button" class="btn btn-step btn-prev" onclick="prevStep()">
+            <i class="bi bi-arrow-left"></i> <span data-i18n="btn_prev">Previous</span>
+          </button>
+          <button type="button" class="btn btn-submit" onclick="submitForm()">
+            <i class="bi bi-person-plus me-2"></i> <span data-i18n="btn_submit">Complete Registration</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="text-center mt-5 pt-4 border-top">
+        <p class="text-muted">
+          <span data-i18n="already_have">Already have an account?</span>
+          <a href="login.html" class="text-decoration-none fw-bold" style="color: #0e2a47;" data-i18n="sign_in_here">Sign In Here</a>
+        </p>
+        <p class="text-muted small">
+          <span data-i18n="need_help">Need assistance? Contact the Visa Office at</span>
+          <a href="mailto:visa.office@aiu.edu.my" class="text-decoration-none" style="color: #0e2a47;">visa.office@aiu.edu.my</a>
+        </p>
+      </div>
+
+      <div class="university-watermark" data-i18n="uni_name">Albukhary International University</div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    // ------------------ i18n ------------------
+    const translations = {
+      en: {
+        brand_title: "ISU Visa Management",
+        brand_subtitle: "Secure Student Visa Registration Portal",
+        step1: "Personal Info",
+        step2: "Academic Info",
+        step3: "Documents",
+        step4: "Account Setup",
+
+        personal_title: "Personal Information",
+        label_fullname: "Full Name",
+        ph_fullname: "Enter your full name",
+        label_dob: "Date of Birth",
+        label_phone: "Phone Number",
+        ph_phone: "01123456789",
+        label_email: "Student Email",
+        ph_email: "your@student.aiu.edu.my",
+        email_hint: "Only @student.aiu.edu.my emails accepted",
+        label_country: "Country",
+        select_country: "Select Country",
+        label_gender: "Gender",
+        select_gender: "Select Gender",
+        gender_male: "Male",
+        gender_female: "Female",
+        // ✅ removed gender_other
+
+        academic_title: "Academic Information",
+        label_dept: "Department",
+        select_dept: "Select Department",
+        dept_bss: "School of Business & Social Sciences",
+        dept_ed: "School of Education & Human Sciences",
+        dept_ci: "School of Computing and Informatics",
+        dept_cfgs: "Centre for Foundation and General Studies",
+        dept_lc: "Language Centre (LC)",
+        label_program: "Program of Study",
+        select_program: "Select Program",
+        lc_hint: "No program selection is required for Language Centre (LC).",
+        label_intake: "Intake",
+        select_intake: "Select Intake",
+        label_grad: "Expected Graduation",
+        select_grad: "Select Graduation",
+        note_strong: "Note:",
+        note_text: "Your academic information will be verified with the university records.",
+
+        docs_title: "Document Upload",
+        label_profilepic: "Profile Picture",
+        upload_click: "Click to upload or drag & drop",
+        upload_types: "JPG, PNG or WEBP (Max 1MB)",
+        photo_own: "* Please upload your own photo only",
+        important_strong: "Important:",
+        important_text: "Please make sure your uploaded photo is clear and matches your official identity.",
+
+        security_title: "Account Security",
+        label_password: "Password",
+        ph_password: "Create a strong password",
+        label_confirm_password: "Confirm Password",
+        ph_confirm_password: "Re-enter your password",
+        pw_rule_len: "At least 8 characters",
+        pw_rule_num: "Contains numbers",
+        pw_rule_special: "Contains special character",
+
+        terms_agree: "I agree to the Terms and Conditions",
+        terms_intro: "By registering for the ISU Visa Management System, you agree to:",
+        terms_1: "Provide accurate and truthful information",
+        terms_2: "Use the system only for legitimate visa application purposes",
+        terms_3: "Keep your login credentials secure and confidential",
+        terms_4: "Comply with all university policies and regulations",
+        terms_5: "Allow the university to verify your submitted information",
+        terms_6: "Receive communication regarding your visa application status",
+        terms_outro: "All information provided will be handled in accordance with our Privacy Policy and Data Protection regulations.",
+
+        btn_prev: "Previous",
+        btn_next: "Next",
+        btn_submit: "Complete Registration",
+
+        already_have: "Already have an account?",
+        sign_in_here: "Sign In Here",
+        need_help: "Need assistance? Contact the Visa Office at",
+        uni_name: "Albukhary International University",
+
+        // alerts
+        alert_required_suffix: " is required",
+        alert_select_image: "Please select an image file",
+        alert_size_1mb: "File size must be less than 1MB",
+        alert_email_invalid: "Only AIU student emails (@student.aiu.edu.my) are allowed",
+        alert_profile_required: "Profile picture is required",
+        alert_pw_required: "Password is required",
+        alert_pw_requirements: "Password does not meet requirements",
+        alert_pw_mismatch: "Passwords do not match",
+        alert_terms: "You must agree to the terms and conditions",
+        alert_success: "Registration successful! Redirecting to login..."
+      },
+
+      ms: {
+        brand_title: "Pengurusan Visa ISU",
+        brand_subtitle: "Portal Pendaftaran Visa Pelajar Selamat",
+        step1: "Maklumat Peribadi",
+        step2: "Maklumat Akademik",
+        step3: "Dokumen",
+        step4: "Akaun",
+
+        personal_title: "Maklumat Peribadi",
+        label_fullname: "Nama Penuh",
+        ph_fullname: "Masukkan nama penuh anda",
+        label_dob: "Tarikh Lahir",
+        label_phone: "Nombor Telefon",
+        ph_phone: "01123456789",
+        label_email: "E-mel Pelajar",
+        ph_email: "your@student.aiu.edu.my",
+        email_hint: "Hanya e-mel @student.aiu.edu.my diterima",
+        label_country: "Negara",
+        select_country: "Pilih Negara",
+        label_gender: "Jantina",
+        select_gender: "Pilih Jantina",
+        gender_male: "Lelaki",
+        gender_female: "Perempuan",
+        // ✅ removed gender_other
+
+        academic_title: "Maklumat Akademik",
+        label_dept: "Jabatan",
+        select_dept: "Pilih Jabatan",
+        dept_bss: "Sekolah Perniagaan & Sains Sosial",
+        dept_ed: "Sekolah Pendidikan & Sains Kemanusiaan",
+        dept_ci: "Sekolah Pengkomputeran dan Informatik",
+        dept_cfgs: "Pusat Asasi dan Pengajian Umum",
+        dept_lc: "Pusat Bahasa (LC)",
+        label_program: "Program Pengajian",
+        select_program: "Pilih Program",
+        lc_hint: "Tiada pemilihan program diperlukan untuk Pusat Bahasa (LC).",
+        label_intake: "Pengambilan",
+        select_intake: "Pilih Pengambilan",
+        label_grad: "Jangkaan Tamat Pengajian",
+        select_grad: "Pilih",
+        note_strong: "Nota:",
+        note_text: "Maklumat akademik anda akan disahkan dengan rekod universiti.",
+
+        docs_title: "Muat Naik Dokumen",
+        label_profilepic: "Gambar Profil",
+        upload_click: "Klik untuk muat naik atau seret & lepas",
+        upload_types: "JPG, PNG atau WEBP (Maks 1MB)",
+        photo_own: "* Sila muat naik foto anda sendiri sahaja",
+        important_strong: "Penting:",
+        important_text: "Pastikan foto jelas dan sepadan dengan identiti rasmi anda.",
+
+        security_title: "Keselamatan Akaun",
+        label_password: "Kata Laluan",
+        ph_password: "Cipta kata laluan yang kuat",
+        label_confirm_password: "Sahkan Kata Laluan",
+        ph_confirm_password: "Masukkan semula kata laluan",
+        pw_rule_len: "Sekurang-kurangnya 8 aksara",
+        pw_rule_num: "Mengandungi nombor",
+        pw_rule_special: "Mengandungi aksara khas",
+
+        terms_agree: "Saya bersetuju dengan Terma dan Syarat",
+        terms_intro: "Dengan mendaftar, anda bersetuju untuk:",
+        terms_1: "Memberi maklumat yang tepat dan benar",
+        terms_2: "Menggunakan sistem untuk tujuan visa yang sah",
+        terms_3: "Menjaga keselamatan maklumat log masuk",
+        terms_4: "Mematuhi polisi dan peraturan universiti",
+        terms_5: "Membenarkan universiti mengesahkan maklumat",
+        terms_6: "Menerima komunikasi berkaitan status visa",
+        terms_outro: "Semua maklumat akan dikendalikan mengikut Dasar Privasi dan peraturan perlindungan data.",
+
+        btn_prev: "Sebelum",
+        btn_next: "Seterusnya",
+        btn_submit: "Selesai Pendaftaran",
+
+        already_have: "Sudah ada akaun?",
+        sign_in_here: "Log Masuk Di Sini",
+        need_help: "Perlukan bantuan? Hubungi Pejabat Visa di",
+        uni_name: "Universiti Antarabangsa Albukhary",
+
+        alert_required_suffix: " diperlukan",
+        alert_select_image: "Sila pilih fail imej",
+        alert_size_1mb: "Saiz fail mesti kurang daripada 1MB",
+        alert_email_invalid: "Hanya e-mel pelajar AIU (@student.aiu.edu.my) dibenarkan",
+        alert_profile_required: "Gambar profil diperlukan",
+        alert_pw_required: "Kata laluan diperlukan",
+        alert_pw_requirements: "Kata laluan tidak memenuhi syarat",
+        alert_pw_mismatch: "Kata laluan tidak sepadan",
+        alert_terms: "Anda mesti bersetuju dengan terma dan syarat",
+        alert_success: "Pendaftaran berjaya! Menghala ke log masuk..."
+      },
+
+      id: {
+        brand_title: "Manajemen Visa ISU",
+        brand_subtitle: "Portal Pendaftaran Visa Mahasiswa Aman",
+        step1: "Data Pribadi",
+        step2: "Data Akademik",
+        step3: "Dokumen",
+        step4: "Akun",
+
+        personal_title: "Informasi Pribadi",
+        label_fullname: "Nama Lengkap",
+        ph_fullname: "Masukkan nama lengkap Anda",
+        label_dob: "Tanggal Lahir",
+        label_phone: "Nomor Telepon",
+        ph_phone: "01123456789",
+        label_email: "Email Mahasiswa",
+        ph_email: "your@student.aiu.edu.my",
+        email_hint: "Hanya email @student.aiu.edu.my yang diterima",
+        label_country: "Negara",
+        select_country: "Pilih Negara",
+        label_gender: "Jenis Kelamin",
+        select_gender: "Pilih",
+        gender_male: "Laki-laki",
+        gender_female: "Perempuan",
+        // ✅ removed gender_other
+
+        academic_title: "Informasi Akademik",
+        label_dept: "Departemen",
+        select_dept: "Pilih Departemen",
+        dept_bss: "Sekolah Bisnis & Ilmu Sosial",
+        dept_ed: "Sekolah Pendidikan & Humaniora",
+        dept_ci: "Sekolah Komputasi dan Informatika",
+        dept_cfgs: "Pusat Dasar & Studi Umum",
+        dept_lc: "Pusat Bahasa (LC)",
+        label_program: "Program Studi",
+        select_program: "Pilih Program",
+        lc_hint: "Tidak perlu memilih program untuk Pusat Bahasa (LC).",
+        label_intake: "Intake",
+        select_intake: "Pilih Intake",
+        label_grad: "Perkiraan Lulus",
+        select_grad: "Pilih",
+        note_strong: "Catatan:",
+        note_text: "Informasi akademik Anda akan diverifikasi dengan catatan universitas.",
+
+        docs_title: "Unggah Dokumen",
+        label_profilepic: "Foto Profil",
+        upload_click: "Klik untuk unggah atau seret & lepas",
+        upload_types: "JPG, PNG atau WEBP (Maks 1MB)",
+        photo_own: "* Harap unggah foto Anda sendiri",
+        important_strong: "Penting:",
+        important_text: "Pastikan foto jelas dan sesuai identitas resmi.",
+
+        security_title: "Keamanan Akun",
+        label_password: "Kata Sandi",
+        ph_password: "Buat kata sandi yang kuat",
+        label_confirm_password: "Konfirmasi Kata Sandi",
+        ph_confirm_password: "Masukkan ulang kata sandi",
+        pw_rule_len: "Minimal 8 karakter",
+        pw_rule_num: "Mengandung angka",
+        pw_rule_special: "Mengandung karakter spesial",
+
+        terms_agree: "Saya setuju dengan Syarat dan Ketentuan",
+        terms_intro: "Dengan mendaftar, Anda setuju untuk:",
+        terms_1: "Memberikan informasi yang akurat",
+        terms_2: "Menggunakan sistem untuk tujuan visa yang sah",
+        terms_3: "Menjaga kredensial login",
+        terms_4: "Mematuhi kebijakan universitas",
+        terms_5: "Mengizinkan verifikasi data",
+        terms_6: "Menerima komunikasi status visa",
+        terms_outro: "Semua informasi akan ditangani sesuai Kebijakan Privasi dan regulasi perlindungan data.",
+
+        btn_prev: "Sebelumnya",
+        btn_next: "Berikutnya",
+        btn_submit: "Selesaikan Pendaftaran",
+
+        already_have: "Sudah punya akun?",
+        sign_in_here: "Masuk di sini",
+        need_help: "Butuh bantuan? Hubungi Kantor Visa di",
+        uni_name: "Universitas Internasional Albukhary",
+
+        alert_required_suffix: " wajib diisi",
+        alert_select_image: "Silakan pilih file gambar",
+        alert_size_1mb: "Ukuran file harus kurang dari 1MB",
+        alert_email_invalid: "Hanya email pelajar AIU (@student.aiu.edu.my) yang diizinkan",
+        alert_profile_required: "Foto profil wajib",
+        alert_pw_required: "Kata sandi wajib",
+        alert_pw_requirements: "Kata sandi tidak memenuhi syarat",
+        alert_pw_mismatch: "Kata sandi tidak cocok",
+        alert_terms: "Anda harus menyetujui syarat dan ketentuan",
+        alert_success: "Pendaftaran berhasil! Mengalihkan ke login..."
+      },
+
+      ar: {
+        brand_title: "إدارة تأشيرات ISU",
+        brand_subtitle: "بوابة تسجيل تأشيرة الطلاب الآمنة",
+        step1: "المعلومات الشخصية",
+        step2: "المعلومات الأكاديمية",
+        step3: "المستندات",
+        step4: "إعداد الحساب",
+
+        personal_title: "المعلومات الشخصية",
+        label_fullname: "الاسم الكامل",
+        ph_fullname: "أدخل اسمك الكامل",
+        label_dob: "تاريخ الميلاد",
+        label_phone: "رقم الهاتف",
+        ph_phone: "01123456789",
+        label_email: "بريد الطالب",
+        ph_email: "your@student.aiu.edu.my",
+        email_hint: "يُقبل فقط بريد @student.aiu.edu.my",
+        label_country: "الدولة",
+        select_country: "اختر الدولة",
+        label_gender: "الجنس",
+        select_gender: "اختر",
+        gender_male: "ذكر",
+        gender_female: "أنثى",
+        // ✅ removed gender_other
+
+        academic_title: "المعلومات الأكاديمية",
+        label_dept: "القسم",
+        select_dept: "اختر القسم",
+        dept_bss: "كلية الأعمال والعلوم الاجتماعية",
+        dept_ed: "كلية التربية والعلوم الإنسانية",
+        dept_ci: "كلية الحوسبة والمعلوماتية",
+        dept_cfgs: "مركز التأسيس والدراسات العامة",
+        dept_lc: "مركز اللغات (LC)",
+        label_program: "البرنامج الدراسي",
+        select_program: "اختر البرنامج",
+        lc_hint: "لا يلزم اختيار برنامج لمركز اللغات (LC).",
+        label_intake: "الدفعة",
+        select_intake: "اختر الدفعة",
+        label_grad: "التخرج المتوقع",
+        select_grad: "اختر",
+        note_strong: "ملاحظة:",
+        note_text: "سيتم التحقق من معلوماتك الأكاديمية مع سجلات الجامعة.",
+
+        docs_title: "رفع المستندات",
+        label_profilepic: "الصورة الشخصية",
+        upload_click: "انقر للرفع أو اسحب وأفلت",
+        upload_types: "JPG, PNG أو WEBP (حد أقصى 1MB)",
+        photo_own: "* الرجاء رفع صورتك الشخصية فقط",
+        important_strong: "مهم:",
+        important_text: "تأكد أن الصورة واضحة وتطابق هويتك الرسمية.",
+
+        security_title: "أمان الحساب",
+        label_password: "كلمة المرور",
+        ph_password: "أنشئ كلمة مرور قوية",
+        label_confirm_password: "تأكيد كلمة المرور",
+        ph_confirm_password: "أعد إدخال كلمة المرور",
+        pw_rule_len: "على الأقل 8 أحرف",
+        pw_rule_num: "تحتوي على أرقام",
+        pw_rule_special: "تحتوي على رمز خاص",
+
+        terms_agree: "أوافق على الشروط والأحكام",
+        terms_intro: "بالتسجيل، أنت توافق على:",
+        terms_1: "تقديم معلومات دقيقة وصحيحة",
+        terms_2: "استخدام النظام لأغراض التأشيرة المشروعة فقط",
+        terms_3: "الحفاظ على بيانات الدخول بسرية",
+        terms_4: "الالتزام بسياسات الجامعة",
+        terms_5: "السماح للجامعة بالتحقق من المعلومات",
+        terms_6: "استلام رسائل حول حالة التأشيرة",
+        terms_outro: "سيتم التعامل مع المعلومات وفق سياسة الخصوصية ولوائح حماية البيانات.",
+
+        btn_prev: "السابق",
+        btn_next: "التالي",
+        btn_submit: "إكمال التسجيل",
+
+        already_have: "لديك حساب بالفعل؟",
+        sign_in_here: "سجّل الدخول هنا",
+        need_help: "تحتاج مساعدة؟ تواصل مع مكتب التأشيرات على",
+        uni_name: "جامعة البخاري الدولية",
+
+        alert_required_suffix: " مطلوب",
+        alert_select_image: "يرجى اختيار ملف صورة",
+        alert_size_1mb: "يجب ألا يتجاوز حجم الملف 1MB",
+        alert_email_invalid: "يُسمح فقط ببريد الطلاب (@student.aiu.edu.my)",
+        alert_profile_required: "الصورة الشخصية مطلوبة",
+        alert_pw_required: "كلمة المرور مطلوبة",
+        alert_pw_requirements: "كلمة المرور لا تفي بالمتطلبات",
+        alert_pw_mismatch: "كلمتا المرور غير متطابقتين",
+        alert_terms: "يجب الموافقة على الشروط والأحكام",
+        alert_success: "تم التسجيل بنجاح! سيتم تحويلك لتسجيل الدخول..."
+      },
+
+      my: {
+        brand_title: "ISU ဗီဇာ စီမံခန့်ခွဲမှု",
+        brand_subtitle: "ကျောင်းသားဗီဇာ မှတ်ပုံတင် ပေါ်တယ်",
+        step1: "ကိုယ်ရေးအချက်အလက်",
+        step2: "ပညာရေးအချက်အလက်",
+        step3: "စာရွက်စာတမ်း",
+        step4: "အကောင့်",
+
+        personal_title: "ကိုယ်ရေးအချက်အလက်",
+        label_fullname: "အမည်အပြည့်အစုံ",
+        ph_fullname: "သင့်အမည်အပြည့်အစုံ ထည့်ပါ",
+        label_dob: "မွေးနေ့",
+        label_phone: "ဖုန်းနံပါတ်",
+        ph_phone: "01123456789",
+        label_email: "ကျောင်းသား အီးမေးလ်",
+        ph_email: "your@student.aiu.edu.my",
+        email_hint: "@student.aiu.edu.my အီးမေးလ်များသာ လက်ခံသည်",
+        label_country: "နိုင်ငံ",
+        select_country: "နိုင်ငံရွေးပါ",
+        label_gender: "ကျား/မ",
+        select_gender: "ရွေးပါ",
+        gender_male: "ကျား",
+        gender_female: "မ",
+        // ✅ removed gender_other
+
+        academic_title: "ပညာရေးအချက်အလက်",
+        label_dept: "ဌာန",
+        select_dept: "ဌာနရွေးပါ",
+        dept_bss: "စီးပွားရေးနှင့် လူမှုရေးသိပ္ပံ",
+        dept_ed: "ပညာရေးနှင့် လူသားရေးသိပ္ပံ",
+        dept_ci: "ကွန်ပျူတာနှင့် အင်ဖိုမက်တစ်",
+        dept_cfgs: "အခြေခံနှင့် အထွေထွေ ပညာရေး",
+        dept_lc: "ဘာသာစကားဌာန (LC)",
+        label_program: "သင်တန်း/ပရိုဂရမ်",
+        select_program: "ပရိုဂရမ်ရွေးပါ",
+        lc_hint: "LC အတွက် ပရိုဂရမ်ရွေးရန် မလိုအပ်ပါ။",
+        label_intake: "အဝင်",
+        select_intake: "ရွေးပါ",
+        label_grad: "မျှော်မှန်းဘွဲ့ယူမည့်နှစ်",
+        select_grad: "ရွေးပါ",
+        note_strong: "မှတ်ချက်:",
+        note_text: "သင်၏ပညာရေးအချက်အလက်များကို တက္ကသိုလ်မှ အတည်ပြုမည်။",
+
+        docs_title: "စာရွက်စာတမ်းတင်ရန်",
+        label_profilepic: "ပရိုဖိုင်ဓာတ်ပုံ",
+        upload_click: "နှိပ်၍တင်ရန် သို့မဟုတ် ဆွဲချပါ",
+        upload_types: "JPG, PNG သို့ WEBP (အများဆုံး 1MB)",
+        photo_own: "* သင့်ကိုယ်ပိုင်ဓာတ်ပုံသာ တင်ပါ",
+        important_strong: "အရေးကြီး:",
+        important_text: "ဓာတ်ပုံရှင်းလင်းပြီး အတည်ပြုမှတ်ပုံတင်နှင့် ကိုက်ညီရမည်။",
+
+        security_title: "အကောင့်လုံခြုံရေး",
+        label_password: "စကားဝှက်",
+        ph_password: "ခိုင်မာသော စကားဝှက် ဖန်တီးပါ",
+        label_confirm_password: "စကားဝှက်အတည်ပြု",
+        ph_confirm_password: "စကားဝှက်ကို ပြန်ထည့်ပါ",
+        pw_rule_len: "အနည်းဆုံး ၈ လုံး",
+        pw_rule_num: "နံပါတ်ပါဝင်ရန်",
+        pw_rule_special: "သင်္ကေတပါဝင်ရန်",
+
+        terms_agree: "စည်းကမ်းနှင့် သတ်မှတ်ချက်များကို သဘောတူသည်",
+        terms_intro: "စာရင်းသွင်းခြင်းဖြင့် သင်သည်:",
+        terms_1: "မှန်ကန်သော အချက်အလက်များ ပေးမည်",
+        terms_2: "တရားဝင်ဗီဇာလုပ်ငန်းအတွက်သာ သုံးမည်",
+        terms_3: "လော့ဂ်အင်အချက်အလက်ကို လုံခြုံအောင် ထိန်းမည်",
+        terms_4: "တက္ကသိုလ် စည်းမျဉ်းများလိုက်နာမည်",
+        terms_5: "အချက်အလက်စစ်ဆေးရန် ခွင့်ပြုမည်",
+        terms_6: "ဗီဇာအခြေအနေ ဆက်သွယ်ချက်များ လက်ခံမည်",
+        terms_outro: "အချက်အလက်အားလုံးကို ကိုယ်ရေးလုံခြုံရေးမူဝါဒအရ ကိုင်တွယ်မည်။",
+
+        btn_prev: "နောက်သို့",
+        btn_next: "ရှေ့သို့",
+        btn_submit: "ပြီးစီးရန်",
+
+        already_have: "အကောင့်ရှိပြီးသားလား?",
+        sign_in_here: "ဝင်ရောက်ပါ",
+        need_help: "အကူအညီလိုပါက Visa Office ကို ဆက်သွယ်ပါ",
+        uni_name: "Albukhary အပြည်ပြည်ဆိုင်ရာ တက္ကသိုလ်",
+
+        alert_required_suffix: " လိုအပ်သည်",
+        alert_select_image: "ပုံဖိုင်ကို ရွေးပါ",
+        alert_size_1mb: "ဖိုင်အရွယ်အစား 1MB ထက် မကြီးရ",
+        alert_email_invalid: "AIU ကျောင်းသား အီးမေးလ်သာ ခွင့်ပြုသည်",
+        alert_profile_required: "ပရိုဖိုင်ဓာတ်ပုံလိုအပ်သည်",
+        alert_pw_required: "စကားဝှက်လိုအပ်သည်",
+        alert_pw_requirements: "စကားဝှက် စည်းမျဉ်းမကိုက်ညီပါ",
+        alert_pw_mismatch: "စကားဝှက် မကိုက်ညီပါ",
+        alert_terms: "စည်းကမ်းများကို သဘောတူရန်လိုအပ်သည်",
+        alert_success: "စာရင်းသွင်းမှုအောင်မြင်! လော့ဂ်အင်သို့ ပြောင်းမည်..."
+      },
+
+      si: {
+        brand_title: "ISU වීසා කළමනාකරණය",
+        brand_subtitle: "ආරක්ෂිත ශිෂ්‍ය වීසා ලියාපදිංචි ද්වාරය",
+        step1: "පුද්ගලික තොරතුරු",
+        step2: "අධ්‍යාපනික තොරතුරු",
+        step3: "ලේඛන",
+        step4: "ගිණුම",
+
+        personal_title: "පුද්ගලික තොරතුරු",
+        label_fullname: "සම්පූර්ණ නම",
+        ph_fullname: "ඔබගේ සම්පූර්ණ නම ඇතුළත් කරන්න",
+        label_dob: "උපන් දිනය",
+        label_phone: "දුරකථන අංකය",
+        ph_phone: "01123456789",
+        label_email: "ශිෂ්‍ය ඊමේල්",
+        ph_email: "your@student.aiu.edu.my",
+        email_hint: "@student.aiu.edu.my ඊමේල් පමණක්",
+        label_country: "රට",
+        select_country: "රට තෝරන්න",
+        label_gender: "ලිංගය",
+        select_gender: "තෝරන්න",
+        gender_male: "පුරුෂ",
+        gender_female: "ස්ත්‍රී",
+        // ✅ removed gender_other
+
+        academic_title: "අධ්‍යාපනික තොරතුරු",
+        label_dept: "දෙපාර්තමේන්තුව",
+        select_dept: "තෝරන්න",
+        dept_bss: "ව්‍යාපාර හා සමාජ විද්‍යා පාසල",
+        dept_ed: "අධ්‍යාපන හා මානව විද්‍යා පාසල",
+        dept_ci: "ගණනය හා ඉන්ෆෝමැටික්ස් පාසල",
+        dept_cfgs: "පදනම් හා සාමාන්‍ය අධ්‍යයන මධ්‍යස්ථානය",
+        dept_lc: "භාෂා මධ්‍යස්ථානය (LC)",
+        label_program: "අධ්‍යයන වැඩසටහන",
+        select_program: "වැඩසටහන තෝරන්න",
+        lc_hint: "LC සඳහා වැඩසටහන තේරීම අවශ්‍ය නොවේ.",
+        label_intake: "ඇතුළත් වීම",
+        select_intake: "තෝරන්න",
+        label_grad: "අපේක්ෂිත උපාධි වසර",
+        select_grad: "තෝරන්න",
+        note_strong: "සටහන:",
+        note_text: "ඔබගේ අධ්‍යාපනික තොරතුරු විශ්වවිද්‍යාල වාර්තා සමඟ තහවුරු කරනු ඇත.",
+
+        docs_title: "ලේඛන උඩුගත කිරීම",
+        label_profilepic: "පැතිකඩ ඡායාරූපය",
+        upload_click: "ක්ලික් කර උඩුගත කරන්න හෝ ඇද දමන්න",
+        upload_types: "JPG, PNG හෝ WEBP (උපරිම 1MB)",
+        photo_own: "* කරුණාකර ඔබගේම ඡායාරූපය පමණක් උඩුගත කරන්න",
+        important_strong: "වැදගත්:",
+        important_text: "ඡායාරූපය පැහැදිලි සහ නිල හැඳුනුම්පතට ගැලපෙන බව තහවුරු කරන්න.",
+
+        security_title: "ගිණුම් ආරක්ෂාව",
+        label_password: "මුරපදය",
+        ph_password: "ශක්තිමත් මුරපදයක් සාදන්න",
+        label_confirm_password: "මුරපදය තහවුරු කරන්න",
+        ph_confirm_password: "මුරපදය නැවත ඇතුළත් කරන්න",
+        pw_rule_len: "අකුරු 8ක් වත්",
+        pw_rule_num: "අංක ඇතුළත් විය යුතුය",
+        pw_rule_special: "විශේෂ සංකේතයක් ඇතුළත් විය යුතුය",
+
+        terms_agree: "මම නීති සහ කොන්දේසි වලට එකඟ වෙමි",
+        terms_intro: "ලියාපදිංචි වීමෙන් ඔබ එකඟ වන්නේ:",
+        terms_1: "නිවැරදි සහ සත්‍ය තොරතුරු ලබා දීම",
+        terms_2: "නීතිමය වීසා අයදුම් කටයුතු සඳහා පමණක් පද්ධතිය භාවිත කිරීම",
+        terms_3: "ලොගින් තොරතුරු රහසිගතව තබා ගැනීම",
+        terms_4: "විශ්වවිද්‍යාල නීති/ප්‍රතිපත්ති පිළිපැදීම",
+        terms_5: "තොරතුරු තහවුරු කිරීමට ඉඩ දීම",
+        terms_6: "වීසා තත්ත්වය පිළිබඳ දැනුම්දීම් ලබා ගැනීම",
+        terms_outro: "දත්ත ආරක්ෂණ නීති අනුව තොරතුරු කළමනාකරණය කරනු ඇත.",
+
+        btn_prev: "පෙර",
+        btn_next: "ඊළඟ",
+        btn_submit: "ලියාපදිංචිය අවසන් කරන්න",
+
+        already_have: "දැනටමත් ගිණුමක් තිබේද?",
+        sign_in_here: "මෙහි පිවිසෙන්න",
+        need_help: "සහය අවශ්‍යද? Visa Office වෙත සම්බන්ධ වන්න",
+        uni_name: "Albukhary International University",
+
+        alert_required_suffix: " අවශ්‍යයි",
+        alert_select_image: "කරුණාකර ඡායාරූප ගොනුවක් තෝරන්න",
+        alert_size_1mb: "ගොනුව 1MB ට අඩු විය යුතුය",
+        alert_email_invalid: "AIU ශිෂ්‍ය ඊමේල් පමණක් අවසර ඇත",
+        alert_profile_required: "පැතිකඩ ඡායාරූපය අවශ්‍යයි",
+        alert_pw_required: "මුරපදය අවශ්‍යයි",
+        alert_pw_requirements: "මුරපදය අවශ්‍යතා පුරවන්නේ නැත",
+        alert_pw_mismatch: "මුරපද නොගැලපේ",
+        alert_terms: "නීති/කොන්දේසි වලට එකඟ විය යුතුය",
+        alert_success: "ලියාපදිංචිය සාර්ථකයි! පිවිසුම වෙත යොමු කරයි..."
+      },
+
+      ta: {
+        brand_title: "ISU விசா மேலாண்மை",
+        brand_subtitle: "பாதுகாப்பான மாணவர் விசா பதிவு தளம்",
+        step1: "தனிப்பட்ட தகவல்",
+        step2: "கல்வி தகவல்",
+        step3: "ஆவணங்கள்",
+        step4: "கணக்கு",
+
+        personal_title: "தனிப்பட்ட தகவல்",
+        label_fullname: "முழு பெயர்",
+        ph_fullname: "உங்கள் முழு பெயரை உள்ளிடுங்கள்",
+        label_dob: "பிறந்த தேதி",
+        label_phone: "தொலைபேசி எண்",
+        ph_phone: "01123456789",
+        label_email: "மாணவர் மின்னஞ்சல்",
+        ph_email: "your@student.aiu.edu.my",
+        email_hint: "@student.aiu.edu.my மின்னஞ்சல்கள் மட்டும்",
+        label_country: "நாடு",
+        select_country: "நாட்டைத் தேர்ந்தெடுக்கவும்",
+        label_gender: "பாலினம்",
+        select_gender: "தேர்ந்தெடுக்கவும்",
+        gender_male: "ஆண்",
+        gender_female: "பெண்",
+        // ✅ removed gender_other
+
+        academic_title: "கல்வி தகவல்",
+        label_dept: "துறை",
+        select_dept: "துறையைத் தேர்ந்தெடுக்கவும்",
+        dept_bss: "வணிகம் & சமூக அறிவியல் பள்ளி",
+        dept_ed: "கல்வி & மனித அறிவியல் பள்ளி",
+        dept_ci: "கணினி & தகவலியல் பள்ளி",
+        dept_cfgs: "அடித்தளம் & பொது ஆய்வுகள் மையம்",
+        dept_lc: "மொழி மையம் (LC)",
+        label_program: "படிப்பு திட்டம்",
+        select_program: "திட்டத்தைத் தேர்ந்தெடுக்கவும்",
+        lc_hint: "LC க்கு திட்டத்தைத் தேர்வு செய்ய வேண்டியதில்லை.",
+        label_intake: "சேர்க்கை",
+        select_intake: "தேர்ந்தெடுக்கவும்",
+        label_grad: "எதிர்பார்க்கப்படும் பட்டமளிப்பு",
+        select_grad: "தேர்ந்தெடுக்கவும்",
+        note_strong: "குறிப்பு:",
+        note_text: "உங்கள் கல்வி தகவல் பல்கலை பதிவுகளுடன் சரிபார்க்கப்படும்.",
+
+        docs_title: "ஆவண பதிவேற்றம்",
+        label_profilepic: "சுயவிவரப் படம்",
+        upload_click: "கிளிக் செய்து பதிவேற்றவும் அல்லது இழுத்து விடவும்",
+        upload_types: "JPG, PNG அல்லது WEBP (அதிகபட்சம் 1MB)",
+        photo_own: "* உங்கள் சொந்தப் புகைப்படத்தை மட்டும் பதிவேற்றவும்",
+        important_strong: "முக்கியம்:",
+        important_text: "படம் தெளிவாகவும் அதிகாரப்பூர்வ அடையாளத்துடன் பொருந்துவதாகவும் இருக்க வேண்டும்.",
+
+        security_title: "கணக்கு பாதுகாப்பு",
+        label_password: "கடவுச்சொல்",
+        ph_password: "வலுவான கடவுச்சொல்லை உருவாக்கவும்",
+        label_confirm_password: "கடவுச்சொல்லை உறுதி செய்யவும்",
+        ph_confirm_password: "மீண்டும் கடவுச்சொல்லை உள்ளிடவும்",
+        pw_rule_len: "குறைந்தது 8 எழுத்துகள்",
+        pw_rule_num: "எண்கள் இருக்க வேண்டும்",
+        pw_rule_special: "சிறப்பு குறி இருக்க வேண்டும்",
+
+        terms_agree: "நான் விதிமுறைகள் மற்றும் நிபந்தனைகளை ஒப்புக்கொள்கிறேன்",
+        terms_intro: "பதிவு செய்வதன் மூலம் நீங்கள் ஒப்புக்கொள்கிறீர்கள்:",
+        terms_1: "சரியான மற்றும் உண்மையான தகவல்களை வழங்குதல்",
+        terms_2: "சட்டபூர்வ விசா பயன்பாட்டிற்கே பயன்படுத்துதல்",
+        terms_3: "உள்நுழைவு விவரங்களை பாதுகாப்பாக வைத்தல்",
+        terms_4: "பல்கலைக் கொள்கைகளை பின்பற்றல்",
+        terms_5: "தகவல் சரிபார்ப்பை அனுமதித்தல்",
+        terms_6: "விசா நிலை தொடர்பான தகவல்களை பெறுதல்",
+        terms_outro: "தகவல்கள் தனியுரிமை/தரவு பாதுகாப்பு விதிகளின்படி கையாளப்படும்.",
+
+        btn_prev: "முந்தையது",
+        btn_next: "அடுத்தது",
+        btn_submit: "பதிவை முடிக்கவும்",
+
+        already_have: "ஏற்கனவே கணக்கு உள்ளதா?",
+        sign_in_here: "இங்கே உள்நுழையவும்",
+        need_help: "உதவி தேவையா? Visa Office-ஐ தொடர்பு கொள்ளவும்",
+        uni_name: "Albukhary International University",
+
+        alert_required_suffix: " அவசியம்",
+        alert_select_image: "படக் கோப்பைத் தேர்ந்தெடுக்கவும்",
+        alert_size_1mb: "கோப்பு அளவு 1MB க்குக் கீழ் இருக்க வேண்டும்",
+        alert_email_invalid: "AIU மாணவர் மின்னஞ்சல் மட்டும் அனுமதி",
+        alert_profile_required: "சுயவிவரப் படம் அவசியம்",
+        alert_pw_required: "கடவுச்சொல் அவசியம்",
+        alert_pw_requirements: "கடவுச்சொல் தேவைகளை பூர்த்தி செய்யவில்லை",
+        alert_pw_mismatch: "கடவுச்சொற்கள் பொருந்தவில்லை",
+        alert_terms: "விதிமுறைகளை ஒப்புக்கொள்ள வேண்டும்",
+        alert_success: "பதிவு வெற்றி! உள்நுழைவு பக்கத்திற்கு மாற்றப்படுகிறது..."
+      }
+    };
+
+    function t(key) {
+      const lang = localStorage.getItem("isu_lang") || "en";
+      return (translations[lang] && translations[lang][key]) || translations.en[key] || key;
+    }
+
+    function applyLanguage(lang) {
+      const dict = translations[lang] || translations.en;
+
+      document.querySelectorAll("[data-i18n]").forEach(el => {
+        const key = el.getAttribute("data-i18n");
+        if (dict[key]) el.textContent = dict[key];
+      });
+
+      document.querySelectorAll("[data-i18n-ph]").forEach(el => {
+        const key = el.getAttribute("data-i18n-ph");
+        if (dict[key]) el.setAttribute("placeholder", dict[key]);
+      });
+
+      // Set direction for Arabic
+      if (lang === "ar") {
+        document.documentElement.dir = "rtl";
+      } else {
+        document.documentElement.dir = "ltr";
+      }
+      document.documentElement.lang = lang;
+
+      localStorage.setItem("isu_lang", lang);
+
+      updatePrograms();
+    }
+
+    // ------------------ Form data + dropdown data ------------------
+    const formData = { personal:{}, academic:{}, documents:{}, security:{} };
+
+    const countries = [
+      "Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda",
+      "Argentina","Armenia","Australia","Austria","Azerbaijan","Bahamas","Bahrain","Bangladesh",
+      "Barbados","Belarus","Belgium","Belize","Benin","Bhutan","Bolivia","Bosnia and Herzegovina",
+      "Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi","Cabo Verde","Cambodia",
+      "Cameroon","Canada","Central African Republic","Chad","Chile","China","Colombia","Comoros",
+      "Congo (Congo-Brazzaville)","Costa Rica","Croatia","Cuba","Cyprus","Czechia (Czech Republic)",
+      "Democratic Republic of the Congo","Denmark","Djibouti","Dominica","Dominican Republic","Ecuador",
+      "Egypt","El Salvador","Equatorial Guinea","Eritrea","Estonia","Eswatini","Ethiopia","Fiji","Finland",
+      "France","Gabon","Gambia","Georgia","Germany","Ghana","Greece","Grenada","Guatemala","Guinea",
+      "Guinea-Bissau","Guyana","Haiti","Honduras","Hungary","Iceland","India","Indonesia","Iran","Iraq",
+      "Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya","Kiribati","Kuwait",
+      "Kyrgyzstan","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya","Liechtenstein","Lithuania",
+      "Luxembourg","Madagascar","Malawi","Malaysia","Maldives","Mali","Malta","Marshall Islands","Mauritania",
+      "Mauritius","Mexico","Micronesia","Moldova","Monaco","Mongolia","Montenegro","Morocco","Mozambique",
+      "Myanmar","Namibia","Nauru","Nepal","Netherlands","New Zealand","Nicaragua","Niger","Nigeria","North Korea",
+      "North Macedonia","Norway","Oman","Pakistan","Palau","Palestine","Panama","Papua New Guinea","Paraguay","Peru",
+      "Philippines","Poland","Portugal","Qatar","Romania","Russia","Rwanda","Saint Kitts and Nevis","Saint Lucia",
+      "Saint Vincent and the Grenadines","Samoa","San Marino","Sao Tome and Principe","Saudi Arabia","Senegal","Serbia",
+      "Seychelles","Sierra Leone","Singapore","Slovakia","Slovenia","Solomon Islands","Somalia","South Africa","South Korea",
+      "South Sudan","Spain","Sri Lanka","Sudan","Suriname","Sweden","Switzerland","Syria","Tajikistan","Tanzania","Thailand",
+      "Timor-Leste","Togo","Tonga","Trinidad and Tobago","Tunisia","Turkey","Turkmenistan","Tuvalu","Uganda","Ukraine",
+      "United Arab Emirates","United Kingdom","United States of America","Uruguay","Uzbekistan","Vanuatu","Venezuela",
+      "Vietnam","Yemen","Zambia","Zimbabwe"
+    ];
+
+    const programsByDept = {
+      "School Of Business & Social Sciences": [
+        "Bachelor of Business Administration (Honours)",
+        "Bachelor of Business Administration with Computer Science (Honours)",
+        "Bachelor of Business Administration (Honours) (Marketing)",
+        "Bachelor of Business Administration (Honours) (Human Resource Management)",
+        "Bachelor of Economics (Honours)",
+        "Bachelor of Social Development (Honours)",
+        "Bachelor of Finance (Islamic Finance) (Honours)",
+        "Bachelor of Politics and International Relations (Honours)",
+        "Master of Business Management",
+        "Master in Social Business",
+        "Doctor of Philosophy (Business Management)"
+      ],
+      "School Of Education & Human Sciences": [
+        "Bachelor of Elementary Education (Honours)",
+        "Bachelor in Early Childhood Education (Honours)",
+        "Bachelor of Media and Communication (Honours)",
+        "Master of Education",
+        "Doctor of Philosophy (Education)"
+      ],
+      "School Of Computing and Informatics": [
+        "Bachelor in Computer Science (Honours)",
+        "Bachelor in Data Science (Honours)"
+      ],
+      "Centre for Foundation and General Studies": [
+        "Foundation in Computing",
+        "Foundation in Arts"
+      ]
+      // LC intentionally has no programs
+    };
+
+    let currentStep = 1;
+    const totalSteps = 4;
+
+    let departmentSelect, programSelect;
+
+    document.addEventListener('DOMContentLoaded', function() {
+      const savedLang = localStorage.getItem("isu_lang") || "en";
+      document.getElementById("langSelect").value = savedLang;
+      applyLanguage(savedLang);
+
+      document.getElementById("langSelect").addEventListener("change", function() {
+        applyLanguage(this.value);
+      });
+
+      const countrySelect = document.getElementById('country');
+      countries.slice().sort().forEach(country => {
+        const option = document.createElement('option');
+        option.value = country;
+        option.textContent = country;
+        countrySelect.appendChild(option);
+      });
+
+      const intakeSelect = document.getElementById('intake');
+      const currentYear = new Date().getFullYear();
+      const intakeMonths = ["March", "October"];
+      for (let year = currentYear - 5; year <= currentYear + 2; year++) {
+        intakeMonths.forEach(month => {
+          const label = `${month} ${year} / ${year + 1}`;
+          const option = document.createElement('option');
+          option.value = label;
+          option.textContent = label;
+          intakeSelect.appendChild(option);
+        });
+      }
+
+      const gradSelect = document.getElementById('expected_graduation_year');
+      for (let year = currentYear; year <= currentYear + 6; year++) {
+        const marchOption = document.createElement('option');
+        marchOption.value = `March ${year}`;
+        marchOption.textContent = `March ${year}`;
+        gradSelect.appendChild(marchOption);
+
+        const decOption = document.createElement('option');
+        decOption.value = `December ${year}`;
+        decOption.textContent = `December ${year}`;
+        gradSelect.appendChild(decOption);
+      }
+
+      departmentSelect = document.getElementById('department');
+      programSelect = document.getElementById('program_of_study');
+      departmentSelect.addEventListener('change', updatePrograms);
+      updatePrograms();
+
+      const profileUpload = document.getElementById('profileUpload');
+      const profileInput = document.getElementById('profile_pic');
+      const profilePreview = document.getElementById('profilePreview');
+
+      profileUpload.addEventListener('click', () => profileInput.click());
+
+      profileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+          if (!file.type.match('image.*')) {
+            showAlert(t("alert_select_image"), 'danger');
+            profileInput.value = '';
+            return;
+          }
+
+          if (file.size > 1 * 1024 * 1024) {
+            showAlert(t("alert_size_1mb"), 'danger');
+            profileInput.value = '';
+            return;
+          }
+
+          const reader = new FileReader();
+          reader.onload = function(ev) {
+            profilePreview.src = ev.target.result;
+            profilePreview.classList.remove('d-none');
+            profileUpload.querySelector('i').style.display = 'none';
+            profileUpload.querySelectorAll('p').forEach(p => p.style.display = 'none');
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+
+      profileUpload.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        profileUpload.classList.add('drag-over');
+      });
+
+      profileUpload.addEventListener('dragleave', () => {
+        profileUpload.classList.remove('drag-over');
+      });
+
+      profileUpload.addEventListener('drop', (e) => {
+        e.preventDefault();
+        profileUpload.classList.remove('drag-over');
+        profileInput.files = e.dataTransfer.files;
+        profileInput.dispatchEvent(new Event('change'));
+      });
+
+      document.getElementById('togglePassword').addEventListener('click', function() {
+        const password = document.getElementById('password');
+        const icon = this.querySelector('i');
+        if (password.type === 'password') {
+          password.type = 'text';
+          icon.classList.replace('bi-eye-slash', 'bi-eye');
+        } else {
+          password.type = 'password';
+          icon.classList.replace('bi-eye', 'bi-eye-slash');
+        }
+      });
+
+      document.getElementById('toggleConfirmPassword').addEventListener('click', function() {
+        const confirmPassword = document.getElementById('confirm_password');
+        const icon = this.querySelector('i');
+        if (confirmPassword.type === 'password') {
+          confirmPassword.type = 'text';
+          icon.classList.replace('bi-eye-slash', 'bi-eye');
+        } else {
+          confirmPassword.type = 'password';
+          icon.classList.replace('bi-eye', 'bi-eye-slash');
+        }
+      });
+
+      document.getElementById('password').addEventListener('input', validatePassword);
+      document.getElementById('confirm_password').addEventListener('input', validatePasswordMatch);
+
+      loadSavedData();
+
+      document.querySelectorAll('.step').forEach(step => {
+        step.addEventListener('click', function() {
+          const stepNum = parseInt(this.dataset.step);
+          if (stepNum < currentStep) {
+            while (currentStep > stepNum) prevStep();
+          }
+        });
+      });
+    });
+
+    function updatePrograms() {
+      if (!departmentSelect || !programSelect) return;
+
+      const dept = departmentSelect.value;
+
+      programSelect.innerHTML = `<option value="">${t("select_program")}</option>`;
+
+      const isLC = (dept === "Language Centre (LC)");
+
+      programSelect.disabled = isLC;
+      programSelect.required = !isLC;
+
+      const lcHint = document.getElementById("lcHint");
+      if (lcHint) lcHint.style.display = isLC ? "block" : "none";
+
+      if (isLC) return;
+
+      if (programsByDept[dept]) {
+        programsByDept[dept].forEach(program => {
+          const option = document.createElement('option');
+          option.value = program;
+          option.textContent = program;
+          programSelect.appendChild(option);
+        });
+      }
+    }
+
+    function nextStep() {
+      if (!validateStep(currentStep)) return;
+      saveStepData(currentStep);
+
+      if (currentStep < totalSteps) {
+        document.querySelectorAll('.step').forEach(step => step.classList.remove('active'));
+        document.querySelector(`.step[data-step="${currentStep}"]`).classList.add('completed');
+
+        currentStep++;
+        document.querySelector(`.step[data-step="${currentStep}"]`).classList.add('active');
+
+        document.querySelectorAll('.step-content').forEach(content => content.classList.remove('active'));
+        document.getElementById(`step${currentStep}`).classList.add('active');
+      }
+    }
+
+    function prevStep() {
+      if (currentStep > 1) {
+        document.querySelectorAll('.step').forEach(step => step.classList.remove('active'));
+        currentStep--;
+        document.querySelector(`.step[data-step="${currentStep}"]`).classList.add('active');
+
+        document.querySelectorAll('.step-content').forEach(content => content.classList.remove('active'));
+        document.getElementById(`step${currentStep}`).classList.add('active');
+      }
+    }
+
+    function validateStep(step) {
+      switch(step) {
+        case 1: return validatePersonalInfo();
+        case 2: return validateAcademicInfo();
+        case 3: return validateDocuments();
+        case 4: return validateSecurityInfo();
+        default: return true;
+      }
+    }
+
+    function validatePersonalInfo() {
+      const requiredFields = ['name', 'date_of_birth', 'phone_number', 'email', 'country', 'gender'];
+      let isValid = true;
+
+      requiredFields.forEach(field => {
+        const element = document.getElementById(field);
+        if (!element.value.trim()) {
+          showAlert(`${element.previousElementSibling.textContent}${t("alert_required_suffix")}`, 'danger');
+          isValid = false;
+          element.classList.add('is-invalid');
+        } else {
+          element.classList.remove('is-invalid');
+        }
+      });
+
+      const email = document.getElementById('email').value;
+      if (email && !email.endsWith('@student.aiu.edu.my') && !email.endsWith('@aiu.edu.my')) {
+        showAlert(t("alert_email_invalid"), 'danger');
+        isValid = false;
+      }
+
+      return isValid;
+    }
+
+    function validateAcademicInfo() {
+      const dept = document.getElementById('department').value;
+
+      const requiredFields = ['department', 'intake', 'expected_graduation_year'];
+      if (dept !== "Language Centre (LC)") requiredFields.push('program_of_study');
+
+      let isValid = true;
+
+      requiredFields.forEach(field => {
+        const element = document.getElementById(field);
+        if (!element.value) {
+          showAlert(`${element.previousElementSibling.textContent}${t("alert_required_suffix")}`, 'danger');
+          isValid = false;
+          element.classList.add('is-invalid');
+        } else {
+          element.classList.remove('is-invalid');
+        }
+      });
+
+      return isValid;
+    }
+
+    function validateDocuments() {
+      const profilePic = document.getElementById('profile_pic').files[0];
+      if (!profilePic) {
+        showAlert(t("alert_profile_required"), 'danger');
+        return false;
+      }
+      return true;
+    }
+
+    function validateSecurityInfo() {
+      const password = document.getElementById('password').value;
+      const confirmPassword = document.getElementById('confirm_password').value;
+      const terms = document.getElementById('terms').checked;
+
+      if (!password) { showAlert(t("alert_pw_required"), 'danger'); return false; }
+      if (!validatePasswordStrength(password)) { showAlert(t("alert_pw_requirements"), 'danger'); return false; }
+      if (password !== confirmPassword) { showAlert(t("alert_pw_mismatch"), 'danger'); return false; }
+      if (!terms) { showAlert(t("alert_terms"), 'danger'); return false; }
+
+      return true;
+    }
+
+    function validatePassword() {
+      const password = document.getElementById('password').value;
+      const strengthBar = document.getElementById('passwordStrengthBar');
+      const rules = {
+        length: document.getElementById('ruleLength'),
+        number: document.getElementById('ruleNumber'),
+        special: document.getElementById('ruleSpecial')
+      };
+
+      let strength = 0;
+
+      if (password.length >= 8) {
+        strength += 33;
+        rules.length.classList.add('valid'); rules.length.classList.remove('invalid');
+        rules.length.querySelector('i').className = 'bi bi-check-circle';
+      } else {
+        rules.length.classList.add('invalid'); rules.length.classList.remove('valid');
+        rules.length.querySelector('i').className = 'bi bi-circle';
+      }
+
+      if (/\d/.test(password)) {
+        strength += 33;
+        rules.number.classList.add('valid'); rules.number.classList.remove('invalid');
+        rules.number.querySelector('i').className = 'bi bi-check-circle';
+      } else {
+        rules.number.classList.add('invalid'); rules.number.classList.remove('valid');
+        rules.number.querySelector('i').className = 'bi bi-circle';
+      }
+
+      if (/[^A-Za-z0-9]/.test(password)) {
+        strength += 34;
+        rules.special.classList.add('valid'); rules.special.classList.remove('invalid');
+        rules.special.querySelector('i').className = 'bi bi-check-circle';
+      } else {
+        rules.special.classList.add('invalid'); rules.special.classList.remove('valid');
+        rules.special.querySelector('i').className = 'bi bi-circle';
+      }
+
+      strengthBar.style.width = strength + '%';
+      strengthBar.style.backgroundColor = strength < 66 ? '#e74c3c' : (strength < 100 ? '#f39c12' : '#2ecc71');
+
+      return strength === 100;
+    }
+
+    function validatePasswordStrength(password) {
+      return password.length >= 8 && /\d/.test(password) && /[^A-Za-z0-9]/.test(password);
+    }
+
+    function validatePasswordMatch() {
+      const password = document.getElementById('password').value;
+      const confirmPassword = document.getElementById('confirm_password').value;
+      const matchDiv = document.getElementById('passwordMatch');
+
+      if (!confirmPassword) { matchDiv.innerHTML = ''; return false; }
+
+      if (password === confirmPassword) {
+        matchDiv.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Passwords match</span>';
+        return true;
+      } else {
+        matchDiv.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Passwords do not match</span>';
+        return false;
+      }
+    }
+
+    function saveStepData(step) {
+      switch(step) {
+        case 1:
+          formData.personal = {
+            name: document.getElementById('name').value,
+            date_of_birth: document.getElementById('date_of_birth').value,
+            phone_number: document.getElementById('phone_number').value,
+            email: document.getElementById('email').value,
+            country: document.getElementById('country').value,
+            gender: document.getElementById('gender').value
+          };
+          break;
+        case 2:
+          formData.academic = {
+            department: document.getElementById('department').value,
+            program_of_study: document.getElementById('program_of_study').value,
+            intake: document.getElementById('intake').value,
+            expected_graduation_year: document.getElementById('expected_graduation_year').value
+          };
+          break;
+        case 3:
+          formData.documents = {
+            profile_pic: document.getElementById('profile_pic').files[0]?.name || ''
+          };
+          break;
+        case 4:
+          formData.security = { password: document.getElementById('password').value };
+          break;
+      }
+      localStorage.setItem('visaFormData', JSON.stringify(formData));
+    }
+
+    function loadSavedData() {
+      const savedData = localStorage.getItem('visaFormData');
+      if (!savedData) return;
+
+      const data = JSON.parse(savedData);
+
+      if (data.personal) {
+        Object.keys(data.personal).forEach(key => {
+          const element = document.getElementById(key);
+          if (element) element.value = data.personal[key];
+        });
+      }
+
+      if (data.academic) {
+        Object.keys(data.academic).forEach(key => {
+          const element = document.getElementById(key);
+          if (element && key !== "program_of_study") element.value = data.academic[key];
+        });
+
+        if (data.academic.department) {
+          document.getElementById('department').value = data.academic.department;
+          updatePrograms();
+        }
+        if (data.academic.program_of_study) {
+          document.getElementById('program_of_study').value = data.academic.program_of_study;
+        }
+      }
+    }
+
+    function showAlert(message, type) {
+      const alertContainer = document.querySelector('.alert-container');
+      const alert = document.createElement('div');
+      alert.className = `alert alert-${type} alert-custom alert-dismissible fade show`;
+      alert.innerHTML = `
+        <i class="bi ${type === 'danger' ? 'bi-exclamation-triangle' : 'bi-info-circle'} me-2"></i>
+        ${message}
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
+      `;
+      alertContainer.appendChild(alert);
+
+      setTimeout(() => {
+        if (alert.parentNode) alert.parentNode.removeChild(alert);
+      }, 5000);
+    }
+
+    function submitForm() {
+      if (!validateStep(4)) return;
+
+      saveStepData(4);
+
+      const submitBtn = document.querySelector('.btn-submit');
+      const original = submitBtn.innerHTML;
+      submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i> Processing...';
+      submitBtn.disabled = true;
+
+      setTimeout(() => {
+        showAlert(t("alert_success"), 'success');
+        localStorage.removeItem('visaFormData');
+        setTimeout(() => window.location.href = 'login.php', 2000);
+      }, 1500);
+    }
+  </script>
+</body>
+</html>

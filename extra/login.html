@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ISU Visa System - Login</title>
+
+  <link rel="stylesheet" href="bootstrap.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root{
+      --primary-blue: #0e2a47;
+      --secondary-blue: #1a5276;
+      --dark-blue: #0b1f33;
+      --light-blue: #e8f4fd;
+      --accent-green: #2ecc71;
+      --accent-red: #e74c3c;
+      --text-gray: #3E3E3E;
+      --border-gray: #E0E0E0;
+
+      --btn-black: #0b0f14;
+      --btn-navy: #0e2a47;
+    }
+
+    body{
+      font-family: 'Poppins', sans-serif;
+      color: var(--text-gray);
+      min-height: 100vh;
+      padding: 20px;
+      position: relative;
+    }
+
+    body::before{
+      content:'';
+      position: fixed;
+      inset: 0;
+      background-image: url('https://ace-sedi.aiu.edu.my/cfgs%20pic.jpg');
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-attachment: fixed;
+      opacity: 0.35;
+      z-index: -2;
+    }
+
+    /* White overlay opacity requested: 0.001 */
+    body::after{
+      content:'';
+      position: fixed;
+      inset: 0;
+      background: rgba(255,255,255,0.001);
+      z-index: -1;
+    }
+
+    .language-switcher{
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      z-index: 5;
+    }
+
+    .login-shell{
+      max-width: 520px;
+      margin: 0 auto;
+    }
+
+    .login-card{
+      background: rgba(255,255,255,0.92);
+      border-radius: 20px;
+      box-shadow: 0 25px 50px rgba(0,0,0,0.2);
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.35);
+      backdrop-filter: blur(6px);
+    }
+
+    .login-header{
+      padding: 28px 28px 20px;
+      text-align: center;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+      background: linear-gradient(180deg, rgba(14,42,71,0.06), rgba(0,0,0,0));
+    }
+
+    .logo-container{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+
+    .logo-img{
+      width: 58px;
+      height: 58px;
+      object-fit: contain;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(0,0,0,0.06);
+      box-shadow: 0 8px 18px rgba(0,0,0,0.08);
+      padding: 8px;
+    }
+
+    .title{
+      font-family: 'Playfair Display', serif;
+      font-weight: 700;
+      color: var(--dark-blue);
+      font-size: 1.8rem;
+      margin: 0;
+      line-height: 1.1;
+    }
+
+    .subtitle{
+      margin: 6px 0 0;
+      font-size: 1rem;
+      color: var(--text-gray);
+      opacity: 0.85;
+    }
+
+    .form-wrap{
+      padding: 22px 26px 26px;
+    }
+
+    .form-label{
+      font-weight: 600;
+      color: var(--dark-blue);
+      font-size: 0.95rem;
+    }
+
+    .form-control{
+      padding: 0.85rem 1.1rem;
+      border-radius: 12px;
+      border: 2px solid var(--border-gray);
+      transition: all 0.3s ease;
+      font-size: 1rem;
+    }
+
+    .form-control:focus{
+      border-color: var(--primary-blue);
+      box-shadow: 0 0 0 0.25rem rgba(14, 42, 71, 0.14);
+    }
+
+    .input-group-text{
+      background: #fff;
+      border: 2px solid var(--border-gray);
+      border-right: none;
+      border-radius: 12px 0 0 12px;
+      color: var(--text-gray);
+      font-size: 1.1rem;
+    }
+
+    .input-group .form-control{
+      border-left: none;
+      border-radius: 0 12px 12px 0;
+    }
+
+    .btn-toggle{
+      border: 2px solid var(--border-gray);
+      border-left: none;
+      background: #fff;
+      border-radius: 0 12px 12px 0;
+      padding: 0 14px;
+      color: var(--text-gray);
+    }
+    .btn-toggle:hover{
+      background: #f6f7f9;
+    }
+
+    .btn-login{
+      background: linear-gradient(135deg, var(--btn-navy), var(--btn-black));
+      color: #fff;
+      padding: 12px;
+      font-weight: 700;
+      border: none;
+      border-radius: 12px;
+      transition: all 0.25s ease;
+    }
+    .btn-login:hover{
+      color: #fff;
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(11, 15, 20, 0.25);
+      filter: brightness(1.05);
+    }
+
+    .btn-google{
+      border-radius: 12px;
+      border: 2px solid rgba(11, 15, 20, 0.15);
+      padding: 12px;
+      font-weight: 600;
+    }
+
+    .muted-link{
+      color: var(--primary-blue);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .muted-link:hover{
+      text-decoration: underline;
+    }
+
+    .footer-mini{
+      text-align: center;
+      margin-top: 16px;
+      color: rgba(0,0,0,0.55);
+      font-size: 0.9rem;
+    }
+
+    .university-watermark{
+      text-align: center;
+      margin-top: 10px;
+      font-size: 0.85rem;
+      color: rgba(0,0,0,0.35);
+      font-style: italic;
+    }
+
+    @media (max-width: 576px){
+      body{ padding: 12px; }
+      .form-wrap{ padding: 18px; }
+      .login-header{ padding: 22px 18px 14px; }
+      .title{ font-size: 1.55rem; }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Language Switcher -->
+  <div class="language-switcher">
+    <select id="langSelect" class="form-select form-select-sm" style="width:auto;">
+      <option value="en">English</option>
+      <option value="ms">Bahasa Melayu</option>
+      <option value="id">Bahasa Indonesia</option>
+      <option value="my">မြန်မာ</option>
+      <option value="ar">العربية</option>
+      <!-- Sri Lankan language: Sinhala -->
+      <option value="si">සිංහල</option>
+    </select>
+  </div>
+
+  <div class="container d-flex justify-content-center align-items-center min-vh-100">
+    <div class="login-shell w-100">
+      <div class="login-card">
+
+        <div class="login-header">
+          <div class="logo-container">
+            <img
+              src="logo.png"
+              alt="ISU Logo"
+              class="logo-img"
+              onerror="this.style.display='none'; document.getElementById('logoFallback').style.display='flex';"
+            />
+            <div id="logoFallback" class="d-none"
+                 style="width:58px;height:58px;border-radius:12px;background:#0e2a47;align-items:center;justify-content:center;color:#fff;font-size:26px;">
+              <i class="bi bi-passport"></i>
+            </div>
+
+            <div class="text-start">
+              <h1 class="title" data-i18n="brand_title">ISU Visa Management</h1>
+              <p class="subtitle" data-i18n="welcome_subtitle">Welcome back! Please login to continue</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-wrap">
+          <form id="loginForm">
+            <div class="mb-3">
+              <label class="form-label" data-i18n="label_email">Email or Username</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-person"></i></span>
+                <input id="emailInput" type="text" class="form-control" data-i18n-ph="ph_email" placeholder="Enter your email or username" required>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" data-i18n="label_password">Password</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                <input id="passwordInput" type="password" class="form-control" data-i18n-ph="ph_password" placeholder="Enter your password" required>
+                <button class="btn btn-toggle" type="button" id="togglePassword" aria-label="Toggle password visibility">
+                  <i class="bi bi-eye"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="mb-3 d-flex justify-content-between align-items-center">
+              <div class="form-check m-0">
+                <input type="checkbox" class="form-check-input" id="rememberMe">
+                <label class="form-check-label" for="rememberMe" data-i18n="remember_me">Remember me</label>
+              </div>
+              <a href="#" class="muted-link" data-i18n="forgot_password">Forgot password?</a>
+            </div>
+
+            <button type="submit" class="btn btn-login w-100 mb-3">
+              <i class="bi bi-box-arrow-in-right me-2"></i><span data-i18n="btn_login">Login</span>
+            </button>
+
+            <div class="text-center mb-3">
+              <span class="text-muted" data-i18n="no_account">Don't have an account?</span>
+              <a href="register.html" class="muted-link ms-2" data-i18n="register_here">Register here</a>
+            </div>
+
+            <div class="text-center">
+              <button type="button" class="btn btn-google w-100">
+                <i class="bi bi-google me-2"></i><span data-i18n="google_btn">Continue with Google</span>
+              </button>
+            </div>
+          </form>
+
+          <div class="university-watermark mt-4" data-i18n="uni_name">
+            Albukhary International University
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-mini">
+        <div data-i18n="copyright">
+          © 2025 ISU Visa Management System. All rights reserved.
+        </div>
+        <div class="mt-1">
+          <a href="#" class="muted-link me-3" data-i18n="privacy">Privacy Policy</a>
+          <a href="#" class="muted-link" data-i18n="terms">Terms of Service</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // ---------- i18n translations ----------
+    const translations = {
+      en: {
+        brand_title: "ISU Visa Management",
+        welcome_subtitle: "Welcome back! Please login to continue",
+        label_email: "Email or Username",
+        ph_email: "Enter your email or username",
+        label_password: "Password",
+        ph_password: "Enter your password",
+        remember_me: "Remember me",
+        forgot_password: "Forgot password?",
+        btn_login: "Login",
+        no_account: "Don't have an account?",
+        register_here: "Register here",
+        google_btn: "Continue with Google",
+        uni_name: "Albukhary International University",
+        copyright: "© 2025 ISU Visa Management System. All rights reserved.",
+        privacy: "Privacy Policy",
+        terms: "Terms of Service"
+      },
+      ms: {
+        brand_title: "Pengurusan Visa ISU",
+        welcome_subtitle: "Selamat kembali! Sila log masuk untuk meneruskan",
+        label_email: "E-mel atau Nama Pengguna",
+        ph_email: "Masukkan e-mel atau nama pengguna anda",
+        label_password: "Kata Laluan",
+        ph_password: "Masukkan kata laluan anda",
+        remember_me: "Ingat saya",
+        forgot_password: "Lupa kata laluan?",
+        btn_login: "Log Masuk",
+        no_account: "Tiada akaun?",
+        register_here: "Daftar di sini",
+        google_btn: "Teruskan dengan Google",
+        uni_name: "Universiti Antarabangsa Albukhary",
+        copyright: "© 2025 Sistem Pengurusan Visa ISU. Hak cipta terpelihara.",
+        privacy: "Dasar Privasi",
+        terms: "Terma Perkhidmatan"
+      },
+      id: {
+        brand_title: "Manajemen Visa ISU",
+        welcome_subtitle: "Selamat datang kembali! Silakan masuk untuk melanjutkan",
+        label_email: "Email atau Nama Pengguna",
+        ph_email: "Masukkan email atau nama pengguna Anda",
+        label_password: "Kata Sandi",
+        ph_password: "Masukkan kata sandi Anda",
+        remember_me: "Ingat saya",
+        forgot_password: "Lupa kata sandi?",
+        btn_login: "Masuk",
+        no_account: "Belum punya akun?",
+        register_here: "Daftar di sini",
+        google_btn: "Lanjutkan dengan Google",
+        uni_name: "Universitas Internasional Albukhary",
+        copyright: "© 2025 Sistem Manajemen Visa ISU. Hak cipta dilindungi.",
+        privacy: "Kebijakan Privasi",
+        terms: "Ketentuan Layanan"
+      },
+      my: {
+        brand_title: "ISU ဗီဇာ စီမံခန့်ခွဲမှု",
+        welcome_subtitle: "ပြန်လည်ကြိုဆိုပါတယ်! ဆက်လက်လုပ်ဆောင်ရန် ဝင်ရောက်ပါ",
+        label_email: "အီးမေးလ် သို့မဟုတ် အသုံးပြုသူအမည်",
+        ph_email: "သင့်အီးမေးလ် သို့မဟုတ် အသုံးပြုသူအမည်ကို ထည့်ပါ",
+        label_password: "စကားဝှက်",
+        ph_password: "သင့်စကားဝှက်ကို ထည့်ပါ",
+        remember_me: "မှတ်သားထားပါ",
+        forgot_password: "စကားဝှက်မေ့သလား?",
+        btn_login: "ဝင်ရောက်ရန်",
+        no_account: "အကောင့်မရှိသေးဘူးလား?",
+        register_here: "ဒီမှာ စာရင်းသွင်းပါ",
+        google_btn: "Google နဲ့ ဆက်လက်လုပ်ဆောင်ရန်",
+        uni_name: "Albukhary အပြည်ပြည်ဆိုင်ရာ တက္ကသိုလ်",
+        copyright: "© 2025 ISU ဗီဇာ စီမံခန့်ခွဲမှု စနစ်။ မူပိုင်ခွင့်ရှိသည်။",
+        privacy: "ကိုယ်ရေးလုံခြုံရေး မူဝါဒ",
+        terms: "ဝန်ဆောင်မှု စည်းကမ်းချက်များ"
+      },
+      ar: {
+        brand_title: "إدارة تأشيرات ISU",
+        welcome_subtitle: "مرحبًا بعودتك! يرجى تسجيل الدخول للمتابعة",
+        label_email: "البريد الإلكتروني أو اسم المستخدم",
+        ph_email: "أدخل بريدك الإلكتروني أو اسم المستخدم",
+        label_password: "كلمة المرور",
+        ph_password: "أدخل كلمة المرور",
+        remember_me: "تذكرني",
+        forgot_password: "هل نسيت كلمة المرور؟",
+        btn_login: "تسجيل الدخول",
+        no_account: "ليس لديك حساب؟",
+        register_here: "سجل هنا",
+        google_btn: "المتابعة باستخدام Google",
+        uni_name: "جامعة البخاري الدولية",
+        copyright: "© 2025 نظام إدارة تأشيرات ISU. جميع الحقوق محفوظة.",
+        privacy: "سياسة الخصوصية",
+        terms: "شروط الخدمة"
+      },
+      si: {
+        brand_title: "ISU වීසා කළමනාකරණය",
+        welcome_subtitle: "නැවතත් සාදරයෙන් පිළිගනිමු! ඉදිරියට යාම සඳහා පිවිසෙන්න",
+        label_email: "ඊමේල් හෝ පරිශීලක නාමය",
+        ph_email: "ඔබගේ ඊමේල් හෝ පරිශීලක නාමය ඇතුළත් කරන්න",
+        label_password: "මුරපදය",
+        ph_password: "ඔබගේ මුරපදය ඇතුළත් කරන්න",
+        remember_me: "මතක තබාගන්න",
+        forgot_password: "මුරපදය අමතකද?",
+        btn_login: "පිවිසෙන්න",
+        no_account: "ගිණුමක් නැද්ද?",
+        register_here: "මෙහි ලියාපදිංචි වන්න",
+        google_btn: "Google සමඟ ඉදිරියට යන්න",
+        uni_name: "Albukhary ජාත්‍යන්තර විශ්වවිද්‍යාලය",
+        copyright: "© 2025 ISU වීසා කළමනාකරණ පද්ධතිය. සියලු හිමිකම් ඇවිරිණි.",
+        privacy: "පෞද්ගලිකත්ව ප්‍රතිපත්තිය",
+        terms: "සේවා කොන්දේසි"
+      }
+    };
+
+    function applyLanguage(lang) {
+      const dict = translations[lang] || translations.en;
+
+      document.querySelectorAll("[data-i18n]").forEach(el => {
+        const key = el.getAttribute("data-i18n");
+        if (dict[key]) el.textContent = dict[key];
+      });
+
+      document.querySelectorAll("[data-i18n-ph]").forEach(el => {
+        const key = el.getAttribute("data-i18n-ph");
+        if (dict[key]) el.setAttribute("placeholder", dict[key]);
+      });
+
+      // RTL for Arabic
+      if (lang === "ar") {
+        document.documentElement.setAttribute("dir", "rtl");
+      } else {
+        document.documentElement.setAttribute("dir", "ltr");
+      }
+
+      // html lang
+      document.documentElement.lang = lang;
+
+      localStorage.setItem("isu_lang", lang);
+    }
+
+    const savedLang = localStorage.getItem("isu_lang") || "en";
+    document.getElementById("langSelect").value = savedLang;
+    applyLanguage(savedLang);
+
+    document.getElementById("langSelect").addEventListener("change", function() {
+      applyLanguage(this.value);
+    });
+
+    // ---------- Toggle password visibility ----------
+    document.getElementById('togglePassword').addEventListener('click', function() {
+      const passwordInput = document.getElementById('passwordInput');
+      const icon = this.querySelector('i');
+      const isHidden = passwordInput.getAttribute('type') === 'password';
+      passwordInput.setAttribute('type', isHidden ? 'text' : 'password');
+      icon.classList.toggle('bi-eye');
+      icon.classList.toggle('bi-eye-slash');
+    });
+
+    // ---------- Form submission (placeholder) ----------
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      console.log('Login submitted');
+    });
+  </script>
+</body>
+</html>

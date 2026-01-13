@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISU Visa System - Dashboard</title>
+    <link rel="stylesheet" href="bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --sidebar-width: 250px;
+            --sidebar-collapsed-width: 70px;
+            --primary-color: #3a7bd5;
+            --secondary-color: #00d2ff;
+            --sidebar-bg: linear-gradient(180deg, #2c3e50 0%, #1a2530 100%);
+            --sidebar-active: rgba(255,255,255,0.1);
+            --sidebar-hover: rgba(255,255,255,0.05);
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow-x: hidden;
+            background-color: #f8f9fa;
+        }
+        
+        /* Sidebar Styles */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: var(--sidebar-width);
+            height: 100vh;
+            background: var(--sidebar-bg);
+            transition: all 0.3s ease;
+            z-index: 1000;
+            box-shadow: 3px 0 15px rgba(0,0,0,0.1);
+        }
+        
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+        
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            color: white;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+        
+        .logo-text {
+            font-size: 20px;
+            font-weight: 600;
+            transition: opacity 0.3s;
+        }
+        
+        .sidebar.collapsed .logo-text {
+            opacity: 0;
+            width: 0;
+            overflow: hidden;
+        }
+        
+        /* Navigation Styles */
+        .sidebar-nav {
+            padding: 20px 0;
+            height: calc(100vh - 140px);
+            overflow-y: auto;
+        }
+        
+        .nav-item {
+            margin-bottom: 5px;
+            position: relative;
+        }
+        
+        .nav-link {
+            color: rgba(255,255,255,0.8);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            text-decoration: none;
+            transition: all 0.3s;
+            position: relative;
+            border-left: 3px solid transparent;
+        }
+        
+        .nav-link:hover, .nav-link.active {
+            color: white;
+            background: var(--sidebar-hover);
+            border-left-color: var(--primary-color);
+        }
+        
+        .nav-link.active {
+            background: var(--sidebar-active);
+        }
+        
+        .nav-icon {
+            font-size: 18px;
+            width: 24px;
+            text-align: center;
+            margin-right: 15px;
+            flex-shrink: 0;
+        }
+        
+        .sidebar.collapsed .nav-text {
+            opacity: 0;
+            width: 0;
+            overflow: hidden;
+        }
+        
+        .badge {
+            margin-left: auto;
+            font-size: 11px;
+            padding: 3px 8px;
+        }
+        
+        /* Submenu */
+        .submenu {
+            padding-left: 44px;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        
+        .submenu.show {
+            max-height: 500px;
+        }
+        
+        .submenu .nav-link {
+            padding: 8px 20px;
+            font-size: 14px;
+            border-left: none;
+        }
+        
+        .submenu .nav-link::before {
+            content: '';
+            width: 5px;
+            height: 5px;
+            background: rgba(255,255,255,0.5);
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        
+        /* Main Content */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            transition: margin-left 0.3s ease;
+            min-height: 100vh;
+        }
+        
+        .sidebar.collapsed ~ .main-content {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+        
+        /* Topbar */
+        .topbar {
+            background: white;
+            padding: 15px 25px;
+            border-bottom: 1px solid #e0e0e0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .topbar-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        /* Toggle Button */
+        .sidebar-toggle {
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+        
+        .sidebar-toggle:hover {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        /* User Menu */
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .notification {
+            position: relative;
+            color: #666;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        
+        .notification-badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: #dc3545;
+            color: white;
+            font-size: 10px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 50px;
+            transition: background 0.3s;
+        }
+        
+        .user-profile:hover {
+            background: #f0f0f0;
+        }
+        
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        
+        .user-info {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .user-name {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .user-role {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        /* Content Area */
+        .content {
+            padding: 25px;
+        }
+        
+        .page-header {
+            margin-bottom: 30px;
+        }
+        
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        
+        .page-subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: var(--sidebar-collapsed-width);
+                margin-left: calc(-1 * var(--sidebar-collapsed-width));
+            }
+            
+            .sidebar.show {
+                margin-left: 0;
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .topbar {
+                padding: 15px;
+            }
+            
+            .user-info {
+                display: none;
+            }
+        }
+        
+        /* Custom Scrollbar */
+        .sidebar-nav::-webkit-scrollbar {
+            width: 5px;
+        }
+        
+        .sidebar-nav::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        .sidebar-nav::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 10px;
+        }
+        
+        .sidebar-nav::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.3);
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <a href="#" class="logo">
+                <div class="logo-icon">
+                    <i class="bi bi-passport"></i>
+                </div>
+                <span class="logo-text">ISU Visa</span>
+            </a>
+        </div>
+        
+        <div class="sidebar-nav">
+            <!-- Dashboard -->
+            <div class="nav-item">
+                <a href="#" class="nav-link active">
+                    <i class="bi bi-speedometer2 nav-icon"></i>
+                    <span class="nav-text">Dashboard</span>
+                </a>
+            </div>
+            
+            <!-- Visa Applications -->
+            <div class="nav-item">
+                <a href="#submenuApplications" class="nav-link" data-bs-toggle="collapse">
+                    <i class="bi bi-file-text nav-icon"></i>
+                    <span class="nav-text">Applications</span>
+                    <span class="badge bg-danger ms-auto">3</span>
+                </a>
+                <div class="collapse submenu show" id="submenuApplications">
+                    <a href="#" class="nav-link">New Application</a>
+                    <a href="#" class="nav-link">My Applications</a>
+                    <a href="#" class="nav-link active">Pending Review</a>
+                    <a href="#" class="nav-link">Approved</a>
+                    <a href="#" class="nav-link">Rejected</a>
+                </div>
+            </div>
+            
+            <!-- Documents -->
+            <div class="nav-item">
+                <a href="#" class="nav-link">
+                    <i class="bi bi-folder nav-icon"></i>
+                    <span class="nav-text">Documents</span>
+                </a>
+            </div>
+            
+            <!-- Appointments -->
+            <div class="nav-item">
+                <a href="#" class="nav-link">
+                    <i class="bi bi-calendar-check nav-icon"></i>
+                    <span class="nav-text">Appointments</span>
+                    <span class="badge bg-warning ms-auto">2</span>
+                </a>
+            </div>
+            
+            <!-- Payments -->
+            <div class="nav-item">
+                <a href="#" class="nav-link">
+                    <i class="bi bi-credit-card nav-icon"></i>
+                    <span class="nav-text">Payments</span>
+                </a>
+            </div>
+            
+            <!-- Messages -->
+            <div class="nav-item">
+                <a href="#" class="nav-link">
+                    <i class="bi bi-chat-dots nav-icon"></i>
+                    <span class="nav-text">Messages</span>
+                    <span class="badge bg-primary ms-auto">5</span>
+                </a>
+            </div>
+            
+            <!-- Settings -->
+            <div class="nav-item">
+                <a href="#submenuSettings" class="nav-link" data-bs-toggle="collapse">
+                    <i class="bi bi-gear nav-icon"></i>
+                    <span class="nav-text">Settings</span>
+                </a>
+                <div class="collapse submenu" id="submenuSettings">
+                    <a href="#" class="nav-link">Profile</a>
+                    <a href="#" class="nav-link">Security</a>
+                    <a href="#" class="nav-link">Notifications</a>
+                </div>
+            </div>
+            
+            <!-- Help & Support -->
+            <div class="nav-item">
+                <a href="#" class="nav-link">
+                    <i class="bi bi-question-circle nav-icon"></i>
+                    <span class="nav-text">Help & Support</span>
+                </a>
+            </div>
+            
+            <!-- Logout -->
+            <div class="nav-item mt-auto">
+                <a href="login.html" class="nav-link">
+                    <i class="bi bi-box-arrow-left nav-icon"></i>
+                    <span class="nav-text">Logout</span>
+                </a>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Topbar -->
+        <header class="topbar">
+            <div class="topbar-content">
+                <button class="sidebar-toggle" id="sidebarToggle">
+                    <i class="bi bi-list"></i>
+                </button>
+                
+                <div class="user-menu">
+                    <div class="notification">
+                        <i class="bi bi-bell"></i>
+                        <span class="notification-badge">3</span>
+                    </div>
+                    
+                    <div class="notification">
+                        <i class="bi bi-envelope"></i>
+                        <span class="notification-badge">5</span>
+                    </div>
+                    
+                    <div class="user-profile dropdown">
+                        <div class="user-avatar dropdown-toggle" data-bs-toggle="dropdown">
+                            JS
+                        </div>
+                        <div class="user-info">
+                            <span class="user-name">John Smith</span>
+                            <span class="user-role">Student Visa</span>
+                        </div>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="#"><i class="bi bi-person me-2"></i>My Profile</a></li>
+                            <li><a class="dropdown-item" href="#"><i class="bi bi-gear me-2"></i>Settings</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="login.html"><i class="bi bi-box-arrow-left me-2"></i>Logout</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <!-- Content -->
+        <main class="content">
+            <div class="page-header">
+                <h1 class="page-title">Welcome back, John!</h1>
+                <p class="page-subtitle">Here's what's happening with your visa applications today.</p>
+            </div>
+            
+            <!-- Stats Cards -->
+            <div class="row mb-4">
+                <div class="col-md-3 mb-3">
+                    <div class="card border-primary border-2">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="card-subtitle mb-2 text-muted">Total Applications</h6>
+                                    <h2 class="card-title">12</h2>
+                                </div>
+                                <div class="icon-circle bg-primary-subtle">
+                                    <i class="bi bi-file-text text-primary" style="font-size: 24px;"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-3 mb-3">
+                    <div class="card border-warning border-2">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="card-subtitle mb-2 text-muted">Pending</h6>
+                                    <h2 class="card-title">3</h2>
+                                </div>
+                                <div class="icon-circle bg-warning-subtle">
+                                    <i class="bi bi-clock text-warning" style="font-size: 24px;"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-3 mb-3">
+                    <div class="card border-success border-2">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="card-subtitle mb-2 text-muted">Approved</h6>
+                                    <h2 class="card-title">8</h2>
+                                </div>
+                                <div class="icon-circle bg-success-subtle">
+                                    <i class="bi bi-check-circle text-success" style="font-size: 24px;"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-3 mb-3">
+                    <div class="card border-info border-2">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="card-subtitle mb-2 text-muted">Upcoming Appointments</h6>
+                                    <h2 class="card-title">2</h2>
+                                </div>
+                                <div class="icon-circle bg-info-subtle">
+                                    <i class="bi bi-calendar text-info" style="font-size: 24px;"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Recent Applications -->
+            <div class="row">
+                <div class="col-lg-8 mb-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Recent Applications</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Application ID</th>
+                                            <th>Type</th>
+                                            <th>Status</th>
+                                            <th>Submitted</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>VIS-2024-001</td>
+                                            <td>Student Visa</td>
+                                            <td><span class="badge bg-warning">Pending Review</span></td>
+                                            <td>2024-01-15</td>
+                                            <td><button class="btn btn-sm btn-outline-primary">View</button></td>
+                                        </tr>
+                                        <tr>
+                                            <td>VIS-2024-002</td>
+                                            <td>Tourist Visa</td>
+                                            <td><span class="badge bg-success">Approved</span></td>
+                                            <td>2024-01-10</td>
+                                            <td><button class="btn btn-sm btn-outline-primary">View</button></td>
+                                        </tr>
+                                        <tr>
+                                            <td>VIS-2024-003</td>
+                                            <td>Work Visa</td>
+                                            <td><span class="badge bg-danger">Rejected</span></td>
+                                            <td>2024-01-05</td>
+                                            <td><button class="btn btn-sm btn-outline-primary">View</button></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Quick Actions -->
+                <div class="col-lg-4 mb-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Quick Actions</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-primary">
+                                    <i class="bi bi-plus-circle me-2"></i>New Application
+                                </button>
+                                <button class="btn btn-outline-primary">
+                                    <i class="bi bi-upload me-2"></i>Upload Documents
+                                </button>
+                                <button class="btn btn-outline-primary">
+                                    <i class="bi bi-calendar-plus me-2"></i>Schedule Appointment
+                                </button>
+                                <button class="btn btn-outline-primary">
+                                    <i class="bi bi-cash-coin me-2"></i>Make Payment
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Upcoming Appointments -->
+                    <div class="card mt-4">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Upcoming Appointments</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="list-group list-group-flush">
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="mb-1">Biometrics Collection</h6>
+                                            <small class="text-muted">Tomorrow, 10:00 AM</small>
+                                        </div>
+                                        <button class="btn btn-sm btn-outline-primary">View</button>
+                                    </div>
+                                </div>
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="mb-1">Interview</h6>
+                                            <small class="text-muted">Jan 25, 2024, 2:00 PM</small>
+                                        </div>
+                                        <button class="btn btn-sm btn-outline-primary">View</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Sidebar toggle
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const mainContent = document.querySelector('.main-content');
+        
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+        });
+        
+        // Responsive sidebar for mobile
+        function handleResize() {
+            if (window.innerWidth <= 768) {
+                sidebar.classList.add('collapsed');
+            }
+        }
+        
+        window.addEventListener('resize', handleResize);
+        handleResize();
+        
+        // Auto-close submenus on mobile
+        const navLinks = document.querySelectorAll('.nav-link[data-bs-toggle="collapse"]');
+        navLinks.forEach(link => {
+            link.addEventListener('click', function(e) {
+                if (window.innerWidth <= 768) {
+                    const target = this.getAttribute('href');
+                    const collapse = document.querySelector(target);
+                    collapse.classList.toggle('show');
+                    e.preventDefault();
+                }
+            });
+        });
+        
+        // Active state for nav links
+        const navItems = document.querySelectorAll('.nav-link');
+        navItems.forEach(item => {
+            item.addEventListener('click', function() {
+                navItems.forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+    </script>
+    <style>
+        .icon-circle {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+</body>
+</html>
