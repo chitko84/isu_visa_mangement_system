@@ -1,586 +1,1052 @@
 <?php
-// Set page title
-$page_title = "Exit Clearance - ISSU";
+// student/exit.php
 
-// Include header
-require_once 'header.php';
+$page_title = "Exit Module - ISU Student Portal";
+require_once __DIR__ . "/header.php"; // session + db ($conn) + $student_id
 
-// Note: $conn and $student_id are already available from header.php
+// ------------------------------------------------------------
+// Helpers (important for stored procedures: avoid commands out of sync)
+// ------------------------------------------------------------
+function clearStoredResults(mysqli $conn): void {
+    while ($conn->more_results()) {
+        $conn->next_result();
+        if ($res = $conn->store_result()) {
+            $res->free();
+        }
+    }
+}
 
-// Fetch student basic details
-$student_query = "
-    SELECT s.*, p.program_name, sc.school_name
-    FROM student s
-    LEFT JOIN program p ON s.program_id = p.program_id
-    LEFT JOIN school sc ON p.school_id = sc.school_id
-    WHERE s.student_id = ?
+function h($v): string {
+    return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+}
+
+$success = "";
+$error   = "";
+
+// Exit types MUST match DB CHECK constraint:
+// CHECK (exit_type in ('Completion','Withdrawal','Termination'))
+$allowedExitTypes = ['Completion', 'Withdrawal', 'Termination'];
+
+// Exit visa action types MUST match DB CHECK constraint:
+// CHECK (action_type in ('Cancellation','Lapse','Transfer'))
+$allowedActionTypes = ['Cancellation', 'Lapse', 'Transfer'];
+
+// ------------------------------------------------------------
+// Fetch latest visa (optional validation display)
+// ------------------------------------------------------------
+$currentVisa = null;
+$stmt = $conn->prepare("
+    SELECT visa_id, visa_type, passport_no, issue_date, expiry_date, status
+    FROM student_visa
+    WHERE student_id = ?
+    ORDER BY expiry_date DESC, visa_id DESC
     LIMIT 1
-";
-
-$stmt = $conn->prepare($student_query);
+");
 $stmt->bind_param("i", $student_id);
 $stmt->execute();
-$result = $stmt->get_result();
-$student = $result->fetch_assoc();
+$currentVisa = $stmt->get_result()->fetch_assoc();
+$stmt->close();
 
-// Check if student details were found
-if (!$student) {
-    echo '<div class="alert alert-danger">Student details not found. Please contact support.</div>';
-    require_once 'footer.php';
-    exit();
-}
-
-// Fetch active visa details
-$visa_query = "
-    SELECT * FROM student_visa 
-    WHERE student_id = ? AND status = 'Active'
+// ------------------------------------------------------------
+// Fetch latest exit case for this student (by request_date)
+// ------------------------------------------------------------
+$exitCase = null;
+$stmt = $conn->prepare("
+    SELECT exit_id, student_id, exit_type, request_date, exit_status
+    FROM exit_case
+    WHERE student_id = ?
+    ORDER BY request_date DESC, exit_id DESC
     LIMIT 1
-";
-$visa_stmt = $conn->prepare($visa_query);
-$visa_stmt->bind_param("i", $student_id);
-$visa_stmt->execute();
-$visa = $visa_stmt->get_result()->fetch_assoc();
+");
+$stmt->bind_param("i", $student_id);
+$stmt->execute();
+$exitCase = $stmt->get_result()->fetch_assoc();
+$stmt->close();
 
-// Fetch existing exit case (if any)
-$exit_case_query = "
-    SELECT ec.*, cr.status as clearance_status, cr.submission_date as clearance_submitted
-    FROM exit_case ec
-    LEFT JOIN clearance_record cr ON ec.exit_id = cr.exit_id
-    WHERE ec.student_id = ?
-    ORDER BY ec.request_date DESC
-    LIMIT 1
-";
-$exit_stmt = $conn->prepare($exit_case_query);
-$exit_stmt->bind_param("i", $student_id);
-$exit_stmt->execute();
-$exit_case = $exit_stmt->get_result()->fetch_assoc();
+$currentExitId = $exitCase['exit_id'] ?? null;
 
-// Fetch clearance details if exit case exists
-$clearance_details = null;
-$unit_clearances = null;
-$exit_visa_actions = null;
-
-if ($exit_case) {
-    // Fetch clearance record
-    $clearance_query = "
-        SELECT * FROM clearance_record 
+// ------------------------------------------------------------
+// Fetch clearance record (one-to-one with exit_id - UNIQUE exit_id)
+// ------------------------------------------------------------
+$clearance = null;
+if ($currentExitId) {
+    $stmt = $conn->prepare("
+        SELECT clearance_id, exit_id, submission_date, status
+        FROM clearance_record
         WHERE exit_id = ?
-        ORDER BY submission_date DESC
         LIMIT 1
-    ";
-    $clearance_stmt = $conn->prepare($clearance_query);
-    $clearance_stmt->bind_param("i", $exit_case['exit_id']);
-    $clearance_stmt->execute();
-    $clearance_details = $clearance_stmt->get_result()->fetch_assoc();
-    
-    // Fetch unit clearances
-    if ($clearance_details) {
-        $unit_query = "
-            SELECT * FROM unit_clearance 
-            WHERE clearance_id = ?
-            ORDER BY unit_name
-        ";
-        $unit_stmt = $conn->prepare($unit_query);
-        $unit_stmt->bind_param("i", $clearance_details['clearance_id']);
-        $unit_stmt->execute();
-        $unit_clearances = $unit_stmt->get_result();
-    }
-    
-    // Fetch visa actions
-    $visa_actions_query = "
-        SELECT * FROM exit_visa_action 
-        WHERE exit_id = ?
-        ORDER BY action_date DESC
-    ";
-    $visa_actions_stmt = $conn->prepare($visa_actions_query);
-    $visa_actions_stmt->bind_param("i", $exit_case['exit_id']);
-    $visa_actions_stmt->execute();
-    $exit_visa_actions = $visa_actions_stmt->get_result();
+    ");
+    $stmt->bind_param("i", $currentExitId);
+    $stmt->execute();
+    $clearance = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
 }
 
-// Calculate visa expiry days
-$visa_expiry_days = null;
-if ($visa && $visa['expiry_date']) {
-    $expiry_date = new DateTime($visa['expiry_date']);
-    $today = new DateTime();
-    $interval = $today->diff($expiry_date);
-    $visa_expiry_days = $interval->days;
-    if ($interval->invert) {
-        $visa_expiry_days = -$visa_expiry_days;
+$currentClearanceId = $clearance['clearance_id'] ?? null;
+
+// ------------------------------------------------------------
+// Fetch unit clearance list (by clearance_id)
+// ------------------------------------------------------------
+$unitClearances = [];
+if ($currentClearanceId) {
+    $stmt = $conn->prepare("
+        SELECT unit_clearance_id, clearance_id, unit_name, clearance_date
+        FROM unit_clearance
+        WHERE clearance_id = ?
+        ORDER BY unit_name ASC, unit_clearance_id ASC
+    ");
+    $stmt->bind_param("i", $currentClearanceId);
+    $stmt->execute();
+    $unitClearances = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+}
+
+// ------------------------------------------------------------
+// Fetch exit visa actions list (by exit_id)
+// ------------------------------------------------------------
+$visaActions = [];
+if ($currentExitId) {
+    $stmt = $conn->prepare("
+        SELECT exit_visa_id, exit_id, action_type, action_date, remarks
+        FROM exit_visa_action
+        WHERE exit_id = ?
+        ORDER BY action_date DESC, exit_visa_id DESC
+    ");
+    $stmt->bind_param("i", $currentExitId);
+    $stmt->execute();
+    $visaActions = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+}
+
+// ------------------------------------------------------------
+// Decide if student can submit new exit request
+// (Simple rule: allow if no exit case OR latest is Completed)
+// ------------------------------------------------------------
+$canSubmitExit = true;
+if ($exitCase && ($exitCase['exit_status'] ?? '') !== 'Completed') {
+    $canSubmitExit = false;
+}
+
+// ------------------------------------------------------------
+// Handle POST actions
+// ------------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+
+    try {
+
+        // ---------------------------
+        // Student: submit exit request
+        // Uses: sp_student_submit_exit_request(IN student_id, IN exit_type, OUT exit_id)
+        // ---------------------------
+        if ($action === 'submit_exit') {
+
+            if (!$canSubmitExit) {
+                throw new Exception("You already have an exit request in progress. You can only submit a new one when the current case is completed.");
+            }
+
+            $exit_type = trim($_POST['exit_type'] ?? '');
+            if ($exit_type === '') {
+                throw new Exception("Exit type is required.");
+            }
+            if (!in_array($exit_type, $allowedExitTypes, true)) {
+                throw new Exception("Invalid exit type selected. Allowed: Completion, Withdrawal, Termination.");
+            }
+
+            $stmt = $conn->prepare("CALL sp_student_submit_exit_request(?, ?, @o_exit_id)");
+            $stmt->bind_param("is", $student_id, $exit_type);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $res = $conn->query("SELECT @o_exit_id AS exit_id");
+            $row = $res ? $res->fetch_assoc() : null;
+            $newExitId = (int)($row['exit_id'] ?? 0);
+            if ($res) $res->free();
+
+            if ($newExitId <= 0) {
+                throw new Exception("Failed to create exit request.");
+            }
+
+            $success = "Exit request submitted successfully. Exit ID: {$newExitId}";
+        }
+
+        // ---------------------------
+        // Staff/Admin: update exit status (hidden for students)
+        // sp_staff_update_exit_status(IN exit_id, IN new_status)
+        // ---------------------------
+        if ($action === 'staff_update_exit_status') {
+            if (!in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)) {
+                throw new Exception("Unauthorized.");
+            }
+
+            $exit_id = (int)($_POST['exit_id'] ?? 0);
+            $new_status = trim($_POST['new_status'] ?? '');
+
+            if ($exit_id <= 0 || $new_status === '') {
+                throw new Exception("Exit ID and new status are required.");
+            }
+
+            $stmt = $conn->prepare("CALL sp_staff_update_exit_status(?, ?)");
+            $stmt->bind_param("is", $exit_id, $new_status);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Exit status updated.";
+        }
+
+        // ---------------------------
+        // Staff/Admin: create clearance record (one per exit case)
+        // sp_staff_create_clearance_record(IN exit_id, IN status, OUT clearance_id)
+        // clearance_record.status CHECK ('In Progress','Completed')
+        // ---------------------------
+        if ($action === 'staff_create_clearance') {
+            if (!in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)) {
+                throw new Exception("Unauthorized.");
+            }
+
+            $exit_id = (int)($_POST['exit_id'] ?? 0);
+            $status  = trim($_POST['status'] ?? '');
+
+            $allowed = ['In Progress', 'Completed'];
+            if ($exit_id <= 0) throw new Exception("Exit ID is required.");
+            if (!in_array($status, $allowed, true)) throw new Exception("Invalid clearance status.");
+
+            $stmt = $conn->prepare("CALL sp_staff_create_clearance_record(?, ?, @o_clearance_id)");
+            $stmt->bind_param("is", $exit_id, $status);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Clearance record created.";
+        }
+
+        // ---------------------------
+        // Staff/Admin: add unit clearance (upsert)
+        // sp_staff_upsert_unit_clearance(IN clearance_id, IN unit_name, IN clearance_date, OUT unit_clearance_id)
+        // ---------------------------
+        if ($action === 'staff_upsert_unit_clearance') {
+            if (!in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)) {
+                throw new Exception("Unauthorized.");
+            }
+
+            $clearance_id = (int)($_POST['clearance_id'] ?? 0);
+            $unit_name    = trim($_POST['unit_name'] ?? '');
+            $clearance_date = trim($_POST['clearance_date'] ?? '');
+            if ($clearance_id <= 0 || $unit_name === '') {
+                throw new Exception("Clearance ID and unit name are required.");
+            }
+            if ($clearance_date === '') {
+                $clearance_date = date('Y-m-d');
+            }
+
+            $stmt = $conn->prepare("CALL sp_staff_upsert_unit_clearance(?, ?, ?, @o_unit_clearance_id)");
+            $stmt->bind_param("iss", $clearance_id, $unit_name, $clearance_date);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Unit clearance saved.";
+        }
+
+        // ---------------------------
+        // Staff/Admin: UPDATE unit clearance
+        // sp_staff_update_unit_clearance(IN unit_clearance_id, IN unit_name, IN clearance_date)
+        // ---------------------------
+        if ($action === 'staff_update_unit_clearance') {
+            if (!in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)) {
+                throw new Exception("Unauthorized.");
+            }
+
+            $unit_clearance_id = (int)($_POST['unit_clearance_id'] ?? 0);
+            $unit_name = trim($_POST['unit_name'] ?? '');
+            $clearance_date = trim($_POST['clearance_date'] ?? '');
+
+            if ($unit_clearance_id <= 0) throw new Exception("Unit clearance ID is required.");
+            if ($unit_name === '') throw new Exception("Unit name is required.");
+            if ($clearance_date === '') $clearance_date = date('Y-m-d');
+
+            $stmt = $conn->prepare("CALL sp_staff_update_unit_clearance(?, ?, ?)");
+            $stmt->bind_param("iss", $unit_clearance_id, $unit_name, $clearance_date);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Unit clearance updated.";
+        }
+
+        // ---------------------------
+        // Staff/Admin: DELETE unit clearance
+        // sp_staff_delete_unit_clearance(IN unit_clearance_id)
+        // ---------------------------
+        if ($action === 'staff_delete_unit_clearance') {
+            if (!in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)) {
+                throw new Exception("Unauthorized.");
+            }
+
+            $unit_clearance_id = (int)($_POST['unit_clearance_id'] ?? 0);
+            if ($unit_clearance_id <= 0) throw new Exception("Unit clearance ID is required.");
+
+            $stmt = $conn->prepare("CALL sp_staff_delete_unit_clearance(?)");
+            $stmt->bind_param("i", $unit_clearance_id);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Unit clearance deleted.";
+        }
+
+        // ---------------------------
+        // Staff/Admin: add exit visa action
+        // sp_staff_add_exit_visa_action(IN exit_id, IN action_type, IN action_date, IN remarks, OUT exit_visa_id)
+        // ---------------------------
+        if ($action === 'staff_add_exit_visa_action') {
+            if (!in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)) {
+                throw new Exception("Unauthorized.");
+            }
+
+            $exit_id = (int)($_POST['exit_id'] ?? 0);
+            $action_type = trim($_POST['action_type'] ?? '');
+            $action_date = trim($_POST['action_date'] ?? '');
+            $remarks = trim($_POST['remarks'] ?? '');
+
+            if ($exit_id <= 0) throw new Exception("Exit ID is required.");
+            if (!in_array($action_type, $allowedActionTypes, true)) {
+                throw new Exception("Invalid action type. Allowed: Cancellation, Lapse, Transfer.");
+            }
+            if ($action_date === '') $action_date = date('Y-m-d');
+
+            $stmt = $conn->prepare("CALL sp_staff_add_exit_visa_action(?, ?, ?, ?, @o_exit_visa_id)");
+            $stmt->bind_param("isss", $exit_id, $action_type, $action_date, $remarks);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Exit visa action added.";
+        }
+
+        // ---------------------------
+        // Staff/Admin: UPDATE exit visa action
+        // sp_staff_update_exit_visa_action(IN exit_visa_id, IN action_type, IN action_date, IN remarks)
+        // ---------------------------
+        if ($action === 'staff_update_exit_visa_action') {
+            if (!in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)) {
+                throw new Exception("Unauthorized.");
+            }
+
+            $exit_visa_id = (int)($_POST['exit_visa_id'] ?? 0);
+            $action_type  = trim($_POST['action_type'] ?? '');
+            $action_date  = trim($_POST['action_date'] ?? '');
+            $remarks      = trim($_POST['remarks'] ?? '');
+
+            if ($exit_visa_id <= 0) throw new Exception("Exit visa action ID is required.");
+            if (!in_array($action_type, $allowedActionTypes, true)) {
+                throw new Exception("Invalid action type. Allowed: Cancellation, Lapse, Transfer.");
+            }
+            if ($action_date === '') $action_date = date('Y-m-d');
+
+            $stmt = $conn->prepare("CALL sp_staff_update_exit_visa_action(?, ?, ?, ?)");
+            $stmt->bind_param("isss", $exit_visa_id, $action_type, $action_date, $remarks);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Exit visa action updated.";
+        }
+
+        // ---------------------------
+        // Staff/Admin: DELETE exit visa action
+        // sp_staff_delete_exit_visa_action(IN exit_visa_id)
+        // ---------------------------
+        if ($action === 'staff_delete_exit_visa_action') {
+            if (!in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)) {
+                throw new Exception("Unauthorized.");
+            }
+
+            $exit_visa_id = (int)($_POST['exit_visa_id'] ?? 0);
+            if ($exit_visa_id <= 0) throw new Exception("Exit visa action ID is required.");
+
+            $stmt = $conn->prepare("CALL sp_staff_delete_exit_visa_action(?)");
+            $stmt->bind_param("i", $exit_visa_id);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Exit visa action deleted.";
+        }
+
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+        clearStoredResults($conn);
+    }
+
+    // --------------------------------------------------------
+    // Re-fetch everything after actions
+    // --------------------------------------------------------
+    $stmt = $conn->prepare("
+        SELECT exit_id, student_id, exit_type, request_date, exit_status
+        FROM exit_case
+        WHERE student_id = ?
+        ORDER BY request_date DESC, exit_id DESC
+        LIMIT 1
+    ");
+    $stmt->bind_param("i", $student_id);
+    $stmt->execute();
+    $exitCase = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $currentExitId = $exitCase['exit_id'] ?? null;
+
+    $clearance = null;
+    if ($currentExitId) {
+        $stmt = $conn->prepare("
+            SELECT clearance_id, exit_id, submission_date, status
+            FROM clearance_record
+            WHERE exit_id = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param("i", $currentExitId);
+        $stmt->execute();
+        $clearance = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }
+
+    $currentClearanceId = $clearance['clearance_id'] ?? null;
+
+    $unitClearances = [];
+    if ($currentClearanceId) {
+        $stmt = $conn->prepare("
+            SELECT unit_clearance_id, clearance_id, unit_name, clearance_date
+            FROM unit_clearance
+            WHERE clearance_id = ?
+            ORDER BY unit_name ASC, unit_clearance_id ASC
+        ");
+        $stmt->bind_param("i", $currentClearanceId);
+        $stmt->execute();
+        $unitClearances = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+    }
+
+    $visaActions = [];
+    if ($currentExitId) {
+        $stmt = $conn->prepare("
+            SELECT exit_visa_id, exit_id, action_type, action_date, remarks
+            FROM exit_visa_action
+            WHERE exit_id = ?
+            ORDER BY action_date DESC, exit_visa_id DESC
+        ");
+        $stmt->bind_param("i", $currentExitId);
+        $stmt->execute();
+        $visaActions = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+    }
+
+    $canSubmitExit = true;
+    if ($exitCase && ($exitCase['exit_status'] ?? '') !== 'Completed') {
+        $canSubmitExit = false;
     }
 }
 ?>
 
-<div class="container-fluid py-4">
-    <!-- Page Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
+<div class="container-fluid">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
         <div>
-            <h1 class="h2 fw-bold text-primary">Exit Clearance</h1>
-            <p class="text-muted mb-0">Manage your exit process and clearance status</p>
-        </div>
-        <div>
-            <a href="dashboard.php" class="btn btn-outline-secondary">
-                <i class="bi bi-arrow-left me-1"></i> Back to Dashboard
-            </a>
+            <h2 class="mb-0">Exit Module</h2>
+            <div class="text-muted">Submit your exit request and track clearance progress.</div>
         </div>
     </div>
 
-    <!-- IMPORTANT INFORMATION SECTION - MOVED TO TOP & PERMANENT -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> Important Information</h5>
-                </div>
-                <div class="card-body">
-                    <div class="alert alert-warning mb-3 alert-permanent"> <!-- Added alert-permanent class -->
-                        <h6 class="alert-heading"><i class="bi bi-exclamation-triangle me-2"></i>Before You Exit</h6>
-                        <ul class="mb-0 small">
-                            <li>Ensure all fees are cleared</li>
-                            <li>Return all university property</li>
-                            <li>Complete all academic requirements</li>
-                            <li>Clear any outstanding library books</li>
-                            <li>Update your contact information</li>
-                        </ul>
-                    </div>
-                    
-                    <div class="alert alert-info mb-0 alert-permanent"> <!-- Added alert-permanent class -->
-                        <h6 class="alert-heading"><i class="bi bi-clock-history me-2"></i>Processing Time</h6>
-                        <p class="mb-0 small">Exit clearance typically takes 7-14 working days to process after all documents are submitted.</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Alerts - Removed data-bs-dismiss to prevent auto-hiding -->
-    <?php if ($visa_expiry_days !== null && $visa_expiry_days < 0): ?>
-    <div class="alert alert-danger fade show" role="alert">
-        <i class="bi bi-exclamation-triangle-fill me-2"></i>
-        <strong>Visa Expired!</strong> Your visa has expired. Please resolve this before proceeding with exit clearance.
-    </div>
+    <?php if ($success): ?>
+        <div class="alert alert-success"><?php echo h($success); ?></div>
     <?php endif; ?>
-    
-    <?php if ($exit_case && $exit_case['exit_status'] == 'Pending'): ?>
-    <div class="alert alert-info fade show" role="alert">
-        <i class="bi bi-info-circle-fill me-2"></i>
-        <strong>Exit Request Pending</strong> Your exit request is being processed. Check the status below.
-    </div>
-    <?php endif; ?>
-    
-    <?php if ($exit_case && $exit_case['exit_status'] == 'Approved'): ?>
-    <div class="alert alert-success fade show" role="alert">
-        <i class="bi bi-check-circle-fill me-2"></i>
-        <strong>Exit Approved!</strong> Your exit request has been approved. Please complete the remaining steps.
-    </div>
+    <?php if ($error): ?>
+        <div class="alert alert-danger"><?php echo h($error); ?></div>
     <?php endif; ?>
 
-    <!-- Stats Overview -->
-    <div class="row g-4 mb-4">
-        <div class="col-md-3 col-sm-6">
-            <div class="stat-card bg-white rounded-3 p-4 shadow-sm border">
-                <div class="d-flex align-items-center mb-3">
-                    <div class="icon-circle bg-primary bg-opacity-10 text-primary rounded-circle p-3 me-3">
-                        <i class="bi bi-box-arrow-right fs-4"></i>
-                    </div>
-                    <div>
-                        <h3 class="h5 mb-1 fw-bold">Exit Status</h3>
-                        <?php if ($exit_case): ?>
-                            <span class="badge <?php 
-                                echo ($exit_case['exit_status'] == 'Approved') ? 'bg-success' : 
-                                     (($exit_case['exit_status'] == 'Pending') ? 'bg-warning' : 'bg-danger'); 
-                            ?>">
-                                <?php echo htmlspecialchars($exit_case['exit_status']); ?>
-                            </span>
-                        <?php else: ?>
-                            <span class="badge bg-secondary">Not Started</span>
-                        <?php endif; ?>
-                    </div>
+    <!-- Current Visa (display only) -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+            <span>Current Visa</span>
+            <?php if ($currentVisa && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
+                <div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editVisaModal">
+                        <i class="fas fa-edit"></i> Edit
+                    </button>
                 </div>
-                <p class="text-muted mb-0">
-                    <?php if ($exit_case): ?>
-                        <?php echo date('M d, Y', strtotime($exit_case['request_date'])); ?>
-                    <?php else: ?>
-                        No exit request submitted
-                    <?php endif; ?>
-                </p>
-            </div>
+            <?php endif; ?>
         </div>
-        
-        <div class="col-md-3 col-sm-6">
-            <div class="stat-card bg-white rounded-3 p-4 shadow-sm border">
-                <div class="d-flex align-items-center mb-3">
-                    <div class="icon-circle bg-success bg-opacity-10 text-success rounded-circle p-3 me-3">
-                        <i class="bi bi-shield-check fs-4"></i>
+        <div class="card-body">
+            <?php if ($currentVisa): ?>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <div class="small text-muted">Visa Type</div>
+                        <div class="fw-semibold"><?php echo h($currentVisa['visa_type']); ?></div>
                     </div>
-                    <div>
-                        <h3 class="h5 mb-1 fw-bold">Clearance</h3>
-                        <?php if ($clearance_details): ?>
-                            <span class="badge <?php 
-                                echo ($clearance_details['status'] == 'Completed') ? 'bg-success' : 
-                                     (($clearance_details['status'] == 'In Progress') ? 'bg-warning' : 'bg-danger'); 
-                            ?>">
-                                <?php echo htmlspecialchars($clearance_details['status']); ?>
-                            </span>
-                        <?php else: ?>
-                            <span class="badge bg-secondary">Not Started</span>
-                        <?php endif; ?>
+                    <div class="col-md-4">
+                        <div class="small text-muted">Passport No</div>
+                        <div class="fw-semibold"><?php echo h($currentVisa['passport_no']); ?></div>
                     </div>
-                </div>
-                <p class="text-muted mb-0">
-                    <?php if ($unit_clearances && $unit_clearances->num_rows > 0): ?>
-                        <?php echo $unit_clearances->num_rows; ?> units
-                    <?php else: ?>
-                        No units cleared
-                    <?php endif; ?>
-                </p>
-            </div>
-        </div>
-        
-        <div class="col-md-3 col-sm-6">
-            <div class="stat-card bg-white rounded-3 p-4 shadow-sm border">
-                <div class="d-flex align-items-center mb-3">
-                    <div class="icon-circle bg-warning bg-opacity-10 text-warning rounded-circle p-3 me-3">
-                        <i class="bi bi-person-badge fs-4"></i>
-                    </div>
-                    <div>
-                        <h3 class="h5 mb-1 fw-bold">Visa Status</h3>
-                        <?php if ($visa): ?>
-                            <span class="badge <?php 
-                                echo ($visa['status'] == 'Active') ? 'bg-success' : 'bg-danger'; 
-                            ?>">
-                                <i class="bi bi-check-circle me-1"></i><?php echo htmlspecialchars($visa['status']); ?>
-                            </span>
-                        <?php else: ?>
-                            <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>No Active Visa</span>
-                        <?php endif; ?>
-                    </div>
-                </div>
-                <p class="text-muted mb-0">
-                    <?php if ($visa && $visa['expiry_date']): ?>
-                        Expires: <?php echo date('M d, Y', strtotime($visa['expiry_date'])); ?>
-                    <?php else: ?>
-                        No expiry date
-                    <?php endif; ?>
-                </p>
-            </div>
-        </div>
-        
-        <div class="col-md-3 col-sm-6">
-            <div class="stat-card bg-white rounded-3 p-4 shadow-sm border">
-                <div class="d-flex align-items-center mb-3">
-                    <div class="icon-circle bg-info bg-opacity-10 text-info rounded-circle p-3 me-3">
-                        <i class="bi bi-person-check fs-4"></i>
-                    </div>
-                    <div>
-                        <h3 class="h5 mb-1 fw-bold">Student Status</h3>
-                        <span class="badge <?php echo ($student['status'] == 'Active') ? 'bg-success' : 'bg-danger'; ?>">
-                            <?php echo htmlspecialchars($student['status']); ?>
+                    <div class="col-md-4">
+                        <div class="small text-muted">Status</div>
+                        <span class="badge <?php echo (($currentVisa['status'] ?? '') === 'Active') ? 'bg-success' : 'bg-secondary'; ?>">
+                            <?php echo h($currentVisa['status']); ?>
                         </span>
                     </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted">Issue Date</div>
+                        <div class="fw-semibold"><?php echo h($currentVisa['issue_date']); ?></div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted">Expiry Date</div>
+                        <div class="fw-semibold"><?php echo h($currentVisa['expiry_date']); ?></div>
+                    </div>
                 </div>
-                <p class="text-muted mb-0">
-                    <?php echo htmlspecialchars($student['program_name'] ?? 'No Program'); ?>
-                </p>
-            </div>
+            <?php else: ?>
+                <div class="text-muted">No visa record found.</div>
+            <?php endif; ?>
         </div>
     </div>
 
-    <!-- Main Content -->
-    <div class="row g-4">
-        <!-- Left Column -->
-        <div class="col-lg-8">
-            <!-- Exit Request Section -->
-            <div class="card border-0 shadow-sm mb-4">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-box-arrow-right me-2"></i> Exit Request</h5>
+    <!-- Edit Visa Modal (Staff/Admin only) -->
+    <?php if ($currentVisa && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
+    <div class="modal fade" id="editVisaModal" tabindex="-1" aria-labelledby="editVisaModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editVisaModalLabel">Edit Visa Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <div class="card-body">
-                    <?php if ($exit_case): ?>
-                        <div class="row">
-                            <div class="col-md-6">
-                                <table class="table table-borderless">
-                                    <tr>
-                                        <th width="40%">Exit Type:</th>
-                                        <td><?php echo htmlspecialchars($exit_case['exit_type']); ?></td>
-                                    </tr>
-                                    <tr>
-                                        <th>Request Date:</th>
-                                        <td><?php echo date('M d, Y', strtotime($exit_case['request_date'])); ?></td>
-                                    </tr>
-                                    <tr>
-                                        <th>Exit Status:</th>
-                                        <td>
-                                            <span class="badge <?php 
-                                                echo ($exit_case['exit_status'] == 'Approved') ? 'bg-success' : 
-                                                     (($exit_case['exit_status'] == 'Pending') ? 'bg-warning' : 'bg-danger'); 
-                                            ?>">
-                                                <?php echo htmlspecialchars($exit_case['exit_status']); ?>
-                                            </span>
-                                        </td>
-                                    </tr>
-                                </table>
-                            </div>
-                            <div class="col-md-6">
-                                <table class="table table-borderless">
-                                    <tr>
-                                        <th width="40%">Clearance Status:</th>
-                                        <td>
-                                            <?php if ($clearance_details): ?>
-                                                <span class="badge <?php 
-                                                    echo ($clearance_details['status'] == 'Completed') ? 'bg-success' : 
-                                                         (($clearance_details['status'] == 'In Progress') ? 'bg-warning' : 'bg-danger'); 
-                                                ?>">
-                                                    <?php echo htmlspecialchars($clearance_details['status']); ?>
-                                                </span>
-                                            <?php else: ?>
-                                                <span class="badge bg-secondary">Not Submitted</span>
-                                            <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <th>Submission Date:</th>
-                                        <td>
-                                            <?php if ($clearance_details && $clearance_details['submission_date']): ?>
-                                                <?php echo date('M d, Y', strtotime($clearance_details['submission_date'])); ?>
-                                            <?php else: ?>
-                                                N/A
-                                            <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <th>Actions:</th>
-                                        <td>
-                                            <?php if ($exit_case['exit_status'] == 'Approved'): ?>
-                                                <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#downloadCertificateModal">
-                                                    <i class="bi bi-download me-1"></i> Download Certificate
-                                                </button>
-                                            <?php elseif ($exit_case['exit_status'] == 'Pending'): ?>
-                                                <button class="btn btn-sm btn-warning" disabled>
-                                                    <i class="bi bi-clock me-1"></i> Processing
-                                                </button>
-                                            <?php else: ?>
-                                                <a href="submit_exit.php" class="btn btn-sm btn-primary">
-                                                    <i class="bi bi-pencil me-1"></i> Update Request
-                                                </a>
-                                            <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                </table>
-                            </div>
+                <form method="post" action="update_visa.php">
+                    <div class="modal-body">
+                        <input type="hidden" name="visa_id" value="<?php echo h($currentVisa['visa_id']); ?>">
+                        <input type="hidden" name="student_id" value="<?php echo h($student_id); ?>">
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Visa Type</label>
+                            <input type="text" name="visa_type" class="form-control" value="<?php echo h($currentVisa['visa_type']); ?>" required>
                         </div>
                         
-                        <!-- Clearance Progress -->
-                        <?php 
-                        // Reset unit_clearances pointer if needed
-                        if ($unit_clearances && $unit_clearances->num_rows > 0) {
-                            $unit_clearances->data_seek(0);
-                        ?>
-                        <hr>
-                        <h6 class="fw-bold mb-3">Unit Clearance Progress</h6>
-                        <div class="row">
-                            <?php while ($unit = $unit_clearances->fetch_assoc()): ?>
-                            <div class="col-md-4 mb-2">
-                                <div class="d-flex align-items-center p-2 border rounded">
-                                    <div class="me-3">
-                                        <?php if ($unit['clearance_date']): ?>
-                                            <i class="bi bi-check-circle-fill text-success fs-5"></i>
-                                        <?php else: ?>
-                                            <i class="bi bi-clock text-warning fs-5"></i>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div>
-                                        <div class="fw-semibold"><?php echo htmlspecialchars($unit['unit_name']); ?></div>
-                                        <small class="text-muted">
-                                            <?php if ($unit['clearance_date']): ?>
-                                                Cleared: <?php echo date('M d, Y', strtotime($unit['clearance_date'])); ?>
-                                            <?php else: ?>
-                                                Pending
-                                            <?php endif; ?>
-                                        </small>
-                                    </div>
-                                </div>
-                            </div>
-                            <?php endwhile; ?>
+                        <div class="mb-3">
+                            <label class="form-label">Passport No</label>
+                            <input type="text" name="passport_no" class="form-control" value="<?php echo h($currentVisa['passport_no']); ?>" required>
                         </div>
-                        <?php } ?>
                         
-                    <?php else: ?>
-                        <div class="text-center py-4">
-                            <i class="bi bi-box-arrow-right fs-1 text-muted mb-3"></i>
-                            <h5>No Exit Request Found</h5>
-                            <p class="text-muted mb-3">You haven't submitted an exit request yet. Start the process to begin your clearance.</p>
-                            <?php if ($visa && $visa['status'] == 'Active'): ?>
-                                <a href="submit_exit.php" class="btn btn-primary">
-                                    <i class="bi bi-plus-circle me-1"></i> Submit Exit Request
-                                </a>
-                            <?php else: ?>
-                                <button class="btn btn-primary" disabled title="You need an active visa to submit exit request">
-                                    <i class="bi bi-plus-circle me-1"></i> Submit Exit Request
+                        <div class="mb-3">
+                            <label class="form-label">Issue Date</label>
+                            <input type="date" name="issue_date" class="form-control" value="<?php echo h($currentVisa['issue_date']); ?>" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Expiry Date</label>
+                            <input type="date" name="expiry_date" class="form-control" value="<?php echo h($currentVisa['expiry_date']); ?>" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Status</label>
+                            <select name="status" class="form-select" required>
+                                <option value="Active" <?php echo ($currentVisa['status'] === 'Active') ? 'selected' : ''; ?>>Active</option>
+                                <option value="Expired" <?php echo ($currentVisa['status'] === 'Expired') ? 'selected' : ''; ?>>Expired</option>
+                                <option value="Cancelled" <?php echo ($currentVisa['status'] === 'Cancelled') ? 'selected' : ''; ?>>Cancelled</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Submit Exit Request (Student) -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold">Submit Exit Request</div>
+        <div class="card-body">
+            <?php if (!$canSubmitExit && $exitCase): ?>
+                <div class="alert alert-info mb-0">
+                    You already have an exit request in progress (Exit ID: <strong><?php echo h($exitCase['exit_id']); ?></strong>,
+                    Status: <strong><?php echo h($exitCase['exit_status']); ?></strong>).
+                    You can submit a new request only when it is <strong>Completed</strong>.
+                </div>
+            <?php else: ?>
+                <form method="post" class="row g-3">
+                    <input type="hidden" name="action" value="submit_exit">
+
+                    <div class="col-md-6">
+                        <label class="form-label">Exit Type</label>
+                        <select name="exit_type" class="form-select" required>
+                            <option value="">-- Choose exit type --</option>
+                            <option value="Completion">Completion</option>
+                            <option value="Withdrawal">Withdrawal</option>
+                            <option value="Termination">Termination</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-6 d-flex align-items-end">
+                        <button class="btn btn-primary">
+                            <i class="fas fa-paper-plane me-1"></i> Submit Exit Request
+                        </button>
+                    </div>
+                </form>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Exit Case Details -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+            <span>Exit Case Details</span>
+            <?php if ($exitCase && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
+                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editExitCaseModal">
+                    <i class="fas fa-edit"></i> Edit
+                </button>
+            <?php endif; ?>
+        </div>
+        <div class="card-body">
+            <?php if ($exitCase): ?>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div class="small text-muted">Exit ID</div>
+                        <div class="fw-semibold"><?php echo h($exitCase['exit_id']); ?></div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Exit Type</div>
+                        <div class="fw-semibold"><?php echo h($exitCase['exit_type']); ?></div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Request Date</div>
+                        <div class="fw-semibold"><?php echo h($exitCase['request_date']); ?></div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Exit Status</div>
+                        <span class="badge bg-dark"><?php echo h($exitCase['exit_status']); ?></span>
+                    </div>
+                </div>
+                
+                <!-- Delete Exit Case (Admin only) -->
+                <?php if ($exitCase && ($_SESSION['role'] ?? '') === 'admin'): ?>
+                <div class="mt-3 pt-3 border-top">
+                    <form method="post" onsubmit="return confirm('Are you sure you want to delete this exit case? This will also delete related clearance records, unit clearances, and visa actions.');">
+                        <input type="hidden" name="action" value="delete_exit_case">
+                        <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                            <i class="fas fa-trash me-1"></i> Delete Exit Case
+                        </button>
+                    </form>
+                </div>
+                <?php endif; ?>
+            <?php else: ?>
+                <div class="text-muted">No exit request found yet.</div>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Edit Exit Case Modal -->
+    <?php if ($exitCase && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
+    <div class="modal fade" id="editExitCaseModal" tabindex="-1" aria-labelledby="editExitCaseModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editExitCaseModalLabel">Edit Exit Case</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="post">
+                    <div class="modal-body">
+                        <input type="hidden" name="action" value="update_exit_case">
+                        <input type="hidden" name="exit_id" value="<?php echo h($exitCase['exit_id']); ?>">
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Exit Type</label>
+                            <select name="exit_type" class="form-select" required>
+                                <?php foreach ($allowedExitTypes as $type): ?>
+                                    <option value="<?php echo h($type); ?>" <?php echo ($exitCase['exit_type'] === $type) ? 'selected' : ''; ?>>
+                                        <?php echo h($type); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Request Date</label>
+                            <input type="date" name="request_date" class="form-control" value="<?php echo h($exitCase['request_date']); ?>" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Exit Status</label>
+                            <select name="exit_status" class="form-select" required>
+                                <option value="Pending" <?php echo ($exitCase['exit_status'] === 'Pending') ? 'selected' : ''; ?>>Pending</option>
+                                <option value="In Progress" <?php echo ($exitCase['exit_status'] === 'In Progress') ? 'selected' : ''; ?>>In Progress</option>
+                                <option value="Approved" <?php echo ($exitCase['exit_status'] === 'Approved') ? 'selected' : ''; ?>>Approved</option>
+                                <option value="Completed" <?php echo ($exitCase['exit_status'] === 'Completed') ? 'selected' : ''; ?>>Completed</option>
+                                <option value="Rejected" <?php echo ($exitCase['exit_status'] === 'Rejected') ? 'selected' : ''; ?>>Rejected</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Clearance Record -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+            <span>Clearance Record</span>
+            <?php if ($clearance && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
+                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editClearanceModal">
+                    <i class="fas fa-edit"></i> Edit
+                </button>
+            <?php endif; ?>
+        </div>
+        <div class="card-body">
+            <?php if (!$exitCase): ?>
+                <div class="text-muted">Submit an exit request first.</div>
+            <?php elseif (!$clearance): ?>
+                <div class="text-muted">No clearance record created yet.</div>
+            <?php else: ?>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div class="small text-muted">Clearance ID</div>
+                        <div class="fw-semibold"><?php echo h($clearance['clearance_id']); ?></div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Submission Date</div>
+                        <div class="fw-semibold"><?php echo h($clearance['submission_date']); ?></div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Status</div>
+                        <span class="badge <?php echo (($clearance['status'] ?? '') === 'Completed') ? 'bg-success' : 'bg-warning text-dark'; ?>">
+                            <?php echo h($clearance['status']); ?>
+                        </span>
+                    </div>
+                    <div class="col-md-3">
+                        <?php if ($clearance && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
+                            <form method="post" onsubmit="return confirm('Delete this clearance record? This will also delete all unit clearances.');" class="mt-3">
+                                <input type="hidden" name="action" value="delete_clearance_record">
+                                <input type="hidden" name="clearance_id" value="<?php echo (int)$clearance['clearance_id']; ?>">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                    <i class="fas fa-trash me-1"></i> Delete
                                 </button>
-                                <p class="text-danger small mt-2">You need an active visa to submit an exit request</p>
+                            </form>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <?php if (in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true) && $exitCase): ?>
+                <hr>
+                <h6 class="mb-2">Staff: Create Clearance Record</h6>
+                <form method="post" class="row g-2">
+                    <input type="hidden" name="action" value="staff_create_clearance">
+                    <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
+
+                    <div class="col-md-4">
+                        <select name="status" class="form-select" required>
+                            <option value="">-- Choose --</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="Completed">Completed</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <button class="btn btn-outline-primary">
+                            <i class="fas fa-plus me-1"></i> Create
+                        </button>
+                    </div>
+                </form>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Edit Clearance Modal -->
+    <?php if ($clearance && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
+    <div class="modal fade" id="editClearanceModal" tabindex="-1" aria-labelledby="editClearanceModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editClearanceModalLabel">Edit Clearance Record</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="post">
+                    <div class="modal-body">
+                        <input type="hidden" name="action" value="update_clearance_record">
+                        <input type="hidden" name="clearance_id" value="<?php echo h($clearance['clearance_id']); ?>">
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Submission Date</label>
+                            <input type="date" name="submission_date" class="form-control" value="<?php echo h($clearance['submission_date']); ?>" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Status</label>
+                            <select name="status" class="form-select" required>
+                                <option value="In Progress" <?php echo ($clearance['status'] === 'In Progress') ? 'selected' : ''; ?>>In Progress</option>
+                                <option value="Completed" <?php echo ($clearance['status'] === 'Completed') ? 'selected' : ''; ?>>Completed</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Unit Clearance -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold">Unit Clearance</div>
+        <div class="card-body">
+            <?php if (!$clearance): ?>
+                <div class="text-muted">No clearance record yet.</div>
+            <?php elseif (!$unitClearances): ?>
+                <div class="text-muted">No unit clearance entries yet.</div>
+            <?php else: ?>
+                <div class="table-responsive">
+                    <table class="table table-striped align-middle">
+                        <thead>
+                        <tr>
+                            <th>Unit</th>
+                            <th>Clearance Date</th>
+                            <?php if (in_array($_SESSION['role'] ?? '', ['staff','admin'], true)): ?>
+                                <th style="width: 150px;">Actions</th>
                             <?php endif; ?>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-            
-            <!-- Visa Actions History -->
-            <?php 
-            if ($exit_visa_actions && $exit_visa_actions->num_rows > 0) {
-                $exit_visa_actions->data_seek(0);
-            ?>
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-passport me-2"></i> Visa Actions</h5>
-                </div>
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Action Type</th>
-                                    <th>Date</th>
-                                    <th>Remarks</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php while ($action = $exit_visa_actions->fetch_assoc()): ?>
-                                <tr>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($unitClearances as $u): ?>
+                            <?php $formId = "uc_form_" . (int)$u['unit_clearance_id']; ?>
+                            <tr>
+                                <?php if (in_array($_SESSION['role'] ?? '', ['staff','admin'], true)): ?>
                                     <td>
-                                        <span class="badge 
-                                            <?php echo ($action['action_type'] == 'Visa Cancelled') ? 'bg-danger' : 
-                                                   (($action['action_type'] == 'Exit Endorsement') ? 'bg-success' : 'bg-info'); ?>">
-                                            <?php echo htmlspecialchars($action['action_type']); ?>
-                                        </span>
+                                        <input type="text"
+                                               name="unit_name"
+                                               class="form-control form-control-sm"
+                                               value="<?php echo h($u['unit_name']); ?>"
+                                               required
+                                               form="<?php echo h($formId); ?>">
                                     </td>
-                                    <td><?php echo date('M d, Y', strtotime($action['action_date'])); ?></td>
-                                    <td><?php echo htmlspecialchars($action['remarks'] ?? 'No remarks'); ?></td>
-                                </tr>
-                                <?php endwhile; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            <?php } ?>
-        </div>
-        
-        <!-- Right Column -->
-        <div class="col-lg-4">
-            <!-- Quick Actions -->
-            <div class="card border-0 shadow-sm mb-4">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-lightning-charge me-2"></i> Quick Actions</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row g-3">
-                        <?php if (!$exit_case): ?>
-                        <div class="col-12">
-                            <a href="submit_exit.php" class="quick-action-btn d-block text-center p-3 bg-light rounded-3 text-decoration-none <?php echo (!$visa || $visa['status'] != 'Active') ? 'disabled' : ''; ?>">
-                                <i class="bi bi-box-arrow-right fs-2 text-primary mb-2"></i>
-                                <div class="fw-semibold">Submit Exit Request</div>
-                                <?php if (!$visa || $visa['status'] != 'Active'): ?>
-                                <small class="text-danger">(Requires active visa)</small>
+                                    <td>
+                                        <input type="date"
+                                               name="clearance_date"
+                                               class="form-control form-control-sm"
+                                               value="<?php echo h($u['clearance_date'] ?? date('Y-m-d')); ?>"
+                                               form="<?php echo h($formId); ?>">
+                                    </td>
+                                    <td class="text-nowrap">
+                                        <div class="d-flex gap-1">
+                                            <form id="<?php echo h($formId); ?>" method="post" class="d-inline">
+                                                <input type="hidden" name="action" value="staff_update_unit_clearance">
+                                                <input type="hidden" name="unit_clearance_id" value="<?php echo (int)$u['unit_clearance_id']; ?>">
+                                                <button type="submit" class="btn btn-sm btn-outline-primary" title="Save">
+                                                    <i class="fas fa-save"></i>
+                                                </button>
+                                            </form>
+
+                                            <form method="post" onsubmit="return confirm('Delete this unit clearance?');" class="d-inline">
+                                                <input type="hidden" name="action" value="staff_delete_unit_clearance">
+                                                <input type="hidden" name="unit_clearance_id" value="<?php echo (int)$u['unit_clearance_id']; ?>">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                <?php else: ?>
+                                    <td class="fw-semibold"><?php echo h($u['unit_name']); ?></td>
+                                    <td><?php echo h($u['clearance_date'] ?? '-'); ?></td>
                                 <?php endif; ?>
-                            </a>
-                        </div>
-                        <?php endif; ?>
-                        
-                        <?php if ($exit_case && $clearance_details && $clearance_details['status'] == 'In Progress'): ?>
-                        <div class="col-12">
-                            <a href="upload_documents.php?type=clearance" class="quick-action-btn d-block text-center p-3 bg-light rounded-3 text-decoration-none">
-                                <i class="bi bi-upload fs-2 text-primary mb-2"></i>
-                                <div class="fw-semibold">Upload Clearance Docs</div>
-                            </a>
-                        </div>
-                        <?php endif; ?>
-                        
-                        <?php if ($exit_case && $exit_case['exit_status'] == 'Approved'): ?>
-                        <div class="col-12">
-                            <a href="#" class="quick-action-btn d-block text-center p-3 bg-light rounded-3 text-decoration-none" data-bs-toggle="modal" data-bs-target="#downloadCertificateModal">
-                                <i class="bi bi-download fs-2 text-primary mb-2"></i>
-                                <div class="fw-semibold">Download Certificate</div>
-                            </a>
-                        </div>
-                        <?php endif; ?>
-                        
-                        <div class="col-12">
-                            <a href="documents.php" class="quick-action-btn d-block text-center p-3 bg-light rounded-3 text-decoration-none">
-                                <i class="bi bi-folder fs-2 text-primary mb-2"></i>
-                                <div class="fw-semibold">View Documents</div>
-                            </a>
-                        </div>
-                        
-                        <div class="col-12">
-                            <a href="contact.php" class="quick-action-btn d-block text-center p-3 bg-light rounded-3 text-decoration-none">
-                                <i class="bi bi-question-circle fs-2 text-primary mb-2"></i>
-                                <div class="fw-semibold">Get Help</div>
-                            </a>
-                        </div>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+
+            <?php if (in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true) && $clearance): ?>
+                <hr>
+                <h6 class="mb-2">Staff: Add Unit Clearance</h6>
+                <form method="post" class="row g-2">
+                    <input type="hidden" name="action" value="staff_upsert_unit_clearance">
+                    <input type="hidden" name="clearance_id" value="<?php echo (int)$clearance['clearance_id']; ?>">
+
+                    <div class="col-md-4">
+                        <input type="text" name="unit_name" class="form-control" placeholder="Unit name (e.g. Library)" required>
                     </div>
-                </div>
-            </div>
+
+                    <div class="col-md-4">
+                        <input type="date" name="clearance_date" class="form-control" value="<?php echo h(date('Y-m-d')); ?>">
+                    </div>
+
+                    <div class="col-md-4">
+                        <button class="btn btn-outline-dark">
+                            <i class="fas fa-plus me-1"></i> Add
+                        </button>
+                    </div>
+                </form>
+            <?php endif; ?>
         </div>
     </div>
-</div>
 
-<!-- Certificate Download Modal -->
-<div class="modal fade" id="downloadCertificateModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header bg-primary text-white">
-                <h5 class="modal-title"><i class="bi bi-download me-2"></i> Download Certificate</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <p>Select the certificate type you want to download:</p>
-                <div class="list-group">
-                    <a href="#" class="list-group-item list-group-item-action">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <i class="bi bi-file-text text-primary me-2"></i>
-                                Exit Clearance Certificate
-                            </div>
-                            <i class="bi bi-download"></i>
-                        </div>
-                    </a>
-                    <a href="#" class="list-group-item list-group-item-action">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <i class="bi bi-file-text text-success me-2"></i>
-                                No Objection Certificate (NOC)
-                            </div>
-                            <i class="bi bi-download"></i>
-                        </div>
-                    </a>
-                    <a href="#" class="list-group-item list-group-item-action">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <i class="bi bi-file-text text-info me-2"></i>
-                                Completion Letter
-                            </div>
-                            <i class="bi bi-download"></i>
-                        </div>
-                    </a>
+    <!-- Exit Visa Actions -->
+    <div class="card mb-5">
+        <div class="card-header fw-semibold">Exit Visa Actions</div>
+        <div class="card-body">
+            <?php if (!$exitCase): ?>
+                <div class="text-muted">Submit an exit request first.</div>
+            <?php elseif (!$visaActions): ?>
+                <div class="text-muted">No exit visa actions recorded yet.</div>
+            <?php else: ?>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                        <tr>
+                            <th>Action Type</th>
+                            <th>Action Date</th>
+                            <th>Remarks</th>
+                            <?php if (in_array($_SESSION['role'] ?? '', ['staff','admin'], true)): ?>
+                                <th style="width: 150px;">Actions</th>
+                            <?php endif; ?>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($visaActions as $a): ?>
+                            <?php $formId = "eva_form_" . (int)$a['exit_visa_id']; ?>
+                            <tr>
+                                <?php if (in_array($_SESSION['role'] ?? '', ['staff','admin'], true)): ?>
+                                    <td>
+                                        <select name="action_type"
+                                                class="form-select form-select-sm"
+                                                required
+                                                form="<?php echo h($formId); ?>">
+                                            <?php foreach ($allowedActionTypes as $opt): ?>
+                                                <option value="<?php echo h($opt); ?>" <?php echo (($a['action_type'] ?? '') === $opt) ? 'selected' : ''; ?>>
+                                                    <?php echo h($opt); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <input type="date"
+                                               name="action_date"
+                                               class="form-control form-control-sm"
+                                               value="<?php echo h($a['action_date'] ?? date('Y-m-d')); ?>"
+                                               form="<?php echo h($formId); ?>">
+                                    </td>
+                                    <td>
+                                        <input type="text"
+                                               name="remarks"
+                                               class="form-control form-control-sm"
+                                               value="<?php echo h($a['remarks'] ?? ''); ?>"
+                                               form="<?php echo h($formId); ?>">
+                                    </td>
+                                    <td class="text-nowrap">
+                                        <div class="d-flex gap-1">
+                                            <form id="<?php echo h($formId); ?>" method="post" class="d-inline">
+                                                <input type="hidden" name="action" value="staff_update_exit_visa_action">
+                                                <input type="hidden" name="exit_visa_id" value="<?php echo (int)$a['exit_visa_id']; ?>">
+                                                <button type="submit" class="btn btn-sm btn-outline-primary" title="Save">
+                                                    <i class="fas fa-save"></i>
+                                                </button>
+                                            </form>
+
+                                            <form method="post" onsubmit="return confirm('Delete this exit visa action?');" class="d-inline">
+                                                <input type="hidden" name="action" value="staff_delete_exit_visa_action">
+                                                <input type="hidden" name="exit_visa_id" value="<?php echo (int)$a['exit_visa_id']; ?>">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                <?php else: ?>
+                                    <td class="fw-semibold"><?php echo h($a['action_type']); ?></td>
+                                    <td><?php echo h($a['action_date']); ?></td>
+                                    <td><?php echo h($a['remarks'] ?? ''); ?></td>
+                                <?php endif; ?>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
                 </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-            </div>
+            <?php endif; ?>
+
+            <?php if (in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true) && $exitCase): ?>
+                <hr>
+                <h6 class="mb-2">Staff: Add Exit Visa Action</h6>
+                <form method="post" class="row g-2">
+                    <input type="hidden" name="action" value="staff_add_exit_visa_action">
+                    <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
+
+                    <div class="col-md-3">
+                        <select name="action_type" class="form-select" required>
+                            <option value="">-- Choose --</option>
+                            <?php foreach ($allowedActionTypes as $opt): ?>
+                                <option value="<?php echo h($opt); ?>"><?php echo h($opt); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="col-md-3">
+                        <input type="date" name="action_date" class="form-control" value="<?php echo h(date('Y-m-d')); ?>">
+                    </div>
+
+                    <div class="col-md-4">
+                        <input type="text" name="remarks" class="form-control" placeholder="Remarks (optional)">
+                    </div>
+
+                    <div class="col-md-2">
+                        <button class="btn btn-outline-primary w-100">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                </form>
+            <?php endif; ?>
+
+            <?php if (in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true) && $exitCase): ?>
+                <hr>
+                <h6 class="mb-2">Staff: Update Exit Status</h6>
+                <form method="post" class="row g-2">
+                    <input type="hidden" name="action" value="staff_update_exit_status">
+                    <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
+
+                    <div class="col-md-4">
+                        <select name="new_status" class="form-select" required>
+                            <option value="">-- Choose --</option>
+                            <option value="Pending">Pending</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="Approved">Approved</option>
+                            <option value="Completed">Completed</option>
+                            <option value="Rejected">Rejected</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-4">
+                        <button class="btn btn-outline-dark">
+                            <i class="fas fa-sync-alt me-1"></i> Update
+                        </button>
+                    </div>
+                </form>
+                <div class="form-text mt-2">
+                    Note: Your trigger blocks Approved/Completed if student has pending insurance claims.
+                </div>
+            <?php endif; ?>
+
         </div>
     </div>
+
 </div>
 
-<?php
-// Close database connections
-if (isset($stmt)) $stmt->close();
-if (isset($visa_stmt)) $visa_stmt->close();
-if (isset($exit_stmt)) $exit_stmt->close();
-if (isset($clearance_stmt)) $clearance_stmt->close();
-if (isset($unit_stmt)) $unit_stmt->close();
-if (isset($visa_actions_stmt)) $visa_actions_stmt->close();
+<!-- Add Font Awesome for icons -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
-// Include footer
-require_once 'footer.php';
-?>
+<?php require_once __DIR__ . "/footer.php"; ?>

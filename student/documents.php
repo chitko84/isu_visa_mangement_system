@@ -1,547 +1,435 @@
 <?php
-// Set page title
-$page_title = "My Documents - ISSU";
+// student/documents.php
 
-// Include header
-require_once 'header.php';
+$page_title = "My Visa Documents - ISU Student Portal";
+require_once __DIR__ . "/header.php"; // session + db ($conn) + $student_id
 
-// Note: $conn and $student_id are already available from header.php
-
-// Handle file upload
-$upload_success = false;
-$upload_error = '';
-$document_types = [
-    'Passport Copy' => 'Passport page with photo and details',
-    'Offer Letter' => 'University offer/acceptance letter',
-    'Academic Transcript' => 'Latest academic transcript',
-    'Financial Proof' => 'Bank statement or sponsorship letter',
-    'Medical Report' => 'Medical examination report',
-    'Visa Application Form' => 'Completed visa application form',
-    'Passport Photo' => 'Recent passport-sized photographs',
-    'Police Clearance' => 'Police clearance certificate',
-    'Other' => 'Other supporting documents'
-];
-
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['upload_document'])) {
-    // Get form data
-    $application_id = $_POST['application_id'] ?? '';
-    $document_type = $_POST['document_type'] ?? '';
-    $description = $_POST['description'] ?? '';
-    
-    // Validate application belongs to student
-    $check_app = $conn->prepare("SELECT application_id FROM visa_renewal_application WHERE application_id = ? AND student_id = ?");
-    $check_app->bind_param("ii", $application_id, $student_id);
-    $check_app->execute();
-    $check_app->store_result();
-    
-    if ($check_app->num_rows == 0) {
-        $upload_error = "Invalid application ID or you don't have permission to upload documents for this application.";
-    } elseif (empty($document_type)) {
-        $upload_error = "Please select a document type.";
-    } elseif (!isset($_FILES['document_file']) || $_FILES['document_file']['error'] == UPLOAD_ERR_NO_FILE) {
-        $upload_error = "Please select a file to upload.";
-    } else {
-        $file = $_FILES['document_file'];
-        
-        // File validation
-        $allowed_types = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
-        $max_size = 10 * 1024 * 1024; // 10MB
-        
-        if ($file['size'] > $max_size) {
-            $upload_error = "File size exceeds 10MB limit.";
-        } elseif (!in_array($file['type'], $allowed_types)) {
-            $upload_error = "Only PDF, JPEG, PNG, and GIF files are allowed.";
-        } else {
-            // Generate unique filename
-            $file_ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $filename = 'doc_' . $student_id . '_' . time() . '_' . bin2hex(random_bytes(8)) . '.' . $file_ext;
-            $upload_path = '../uploads/documents/' . $filename;
-            
-            // Create uploads directory if it doesn't exist
-            if (!is_dir('../uploads/documents')) {
-                mkdir('../uploads/documents', 0777, true);
-            }
-            
-            if (move_uploaded_file($file['tmp_name'], $upload_path)) {
-                // Use the stored procedure to insert document
-                $insert_query = "CALL sp_student_add_visa_document(?, ?, ?, ?, @document_id)";
-                $stmt = $conn->prepare($insert_query);
-                $stmt->bind_param("iiss", $student_id, $application_id, $document_type, $upload_path);
-                
-                if ($stmt->execute()) {
-                    $upload_success = true;
-                    // Get the generated document ID
-                    $result = $conn->query("SELECT @document_id as doc_id");
-                    $doc_result = $result->fetch_assoc();
-                    $new_doc_id = $doc_result['doc_id'] ?? 0;
-                } else {
-                    $upload_error = "Failed to save document information to database.";
-                    // Delete uploaded file if DB insert failed
-                    unlink($upload_path);
-                }
-                $stmt->close();
-            } else {
-                $upload_error = "Failed to upload file. Please try again.";
-            }
+// ------------------------------------------------------------
+// Helpers (IMPORTANT for stored procedures: avoid "commands out of sync")
+// ------------------------------------------------------------
+function clearStoredResults(mysqli $conn): void {
+    while ($conn->more_results()) {
+        $conn->next_result();
+        if ($res = $conn->store_result()) {
+            $res->free();
         }
     }
-    $check_app->close();
 }
 
-// Handle document deletion FIRST before rendering anything
-if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
-    $doc_id = $_GET['delete'];
-    
+function h($v): string {
+    return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+}
+
+$success = "";
+$error   = "";
+
+// ------------------------------------------------------------
+// Find current application to attach documents to
+// Priority: active (not "Passport collected"), else latest
+// ------------------------------------------------------------
+$app = null;
+
+$appSqlActive = "
+    SELECT application_id, submission_date, requested_months, status
+    FROM visa_renewal_application
+    WHERE student_id = ?
+      AND status <> 'Passport collected'
+    ORDER BY submission_date DESC, application_id DESC
+    LIMIT 1
+";
+$stmt = $conn->prepare($appSqlActive);
+$stmt->bind_param("i", $student_id);
+$stmt->execute();
+$app = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+
+if (!$app) {
+    $appSqlLast = "
+        SELECT application_id, submission_date, requested_months, status
+        FROM visa_renewal_application
+        WHERE student_id = ?
+        ORDER BY submission_date DESC, application_id DESC
+        LIMIT 1
+    ";
+    $stmt = $conn->prepare($appSqlLast);
+    $stmt->bind_param("i", $student_id);
+    $stmt->execute();
+    $app = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+}
+
+$currentAppId = $app['application_id'] ?? null;
+
+// ------------------------------------------------------------
+// Handle actions (POST)
+// ------------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+
     try {
-        // First, get the file path to delete the physical file
-        $get_file_query = "
-            SELECT d.document_path 
-            FROM visa_document d
-            JOIN visa_renewal_application a ON d.application_id = a.application_id
-            WHERE d.document_id = ? AND a.student_id = ?
-        ";
-        $get_stmt = $conn->prepare($get_file_query);
-        $get_stmt->bind_param("ii", $doc_id, $student_id);
-        $get_stmt->execute();
-        $get_stmt->bind_result($file_path);
-        $get_stmt->fetch();
-        $get_stmt->close();
-        
-        // Use stored procedure to delete document
-        $delete_query = "CALL sp_student_delete_visa_document(?, ?)";
-        $stmt = $conn->prepare($delete_query);
-        $stmt->bind_param("ii", $student_id, $doc_id);
-        
-        if ($stmt->execute()) {
-            // Delete the physical file if it exists
-            if (!empty($file_path) && file_exists($file_path)) {
-                unlink($file_path);
+        // ---------------------------
+        // Add document
+        // ---------------------------
+        if ($action === 'add_document') {
+            if (!$currentAppId) {
+                throw new Exception("No application found yet. Please submit a renewal application first.");
             }
-            
-            $_SESSION['success_message'] = "Document deleted successfully.";
-        } else {
-            $_SESSION['error_message'] = "Failed to delete document from database.";
+
+            $document_type = trim($_POST['document_type'] ?? '');
+            if ($document_type === '') {
+                throw new Exception("Document type is required.");
+            }
+
+            if (!isset($_FILES['document_file']) || $_FILES['document_file']['error'] !== UPLOAD_ERR_OK) {
+                throw new Exception("Please choose a file to upload.");
+            }
+
+            $file = $_FILES['document_file'];
+
+            // Validate file
+            $maxBytes = 5 * 1024 * 1024; // 5MB
+            if ($file['size'] > $maxBytes) {
+                throw new Exception("File too large. Max 5MB.");
+            }
+
+            $allowedExt = ['pdf', 'jpg', 'jpeg', 'png'];
+            $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+            if (!in_array($ext, $allowedExt, true)) {
+                throw new Exception("Invalid file type. Allowed: PDF, JPG, JPEG, PNG.");
+            }
+
+            // Ensure upload folder exists
+            $uploadDir = __DIR__ . "/../uploads/visa_documents/";
+            if (!is_dir($uploadDir)) {
+                @mkdir($uploadDir, 0777, true);
+            }
+
+            // Save file
+            $safeName = "doc_{$student_id}_" . time() . "_" . bin2hex(random_bytes(6)) . "." . $ext;
+            $fullPath = $uploadDir . $safeName;
+
+            if (!move_uploaded_file($file['tmp_name'], $fullPath)) {
+                throw new Exception("Failed to upload file.");
+            }
+
+            // Store relative path for web access
+            $dbPath = "../uploads/visa_documents/" . $safeName;
+
+            // CALL stored procedure
+            $stmt = $conn->prepare("CALL sp_student_add_visa_document(?, ?, ?, ?, @o_doc_id)");
+            $stmt->bind_param("iiss", $student_id, $currentAppId, $document_type, $dbPath);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $res = $conn->query("SELECT @o_doc_id AS document_id");
+            $row = $res ? $res->fetch_assoc() : null;
+            $newDocId = (int)($row['document_id'] ?? 0);
+            if ($res) $res->free();
+
+            if ($newDocId <= 0) {
+                throw new Exception("Document uploaded but no document ID was returned.");
+            }
+
+            $success = "Document uploaded successfully (ID: {$newDocId}).";
         }
-        $stmt->close();
-    } catch (Exception $e) {
-        $_SESSION['error_message'] = "Error deleting document: " . $e->getMessage();
+
+        // ---------------------------
+        // Update document (type + optional replace file)
+        // ---------------------------
+        if ($action === 'update_document') {
+            $document_id   = (int)($_POST['document_id'] ?? 0);
+            $document_type = trim($_POST['document_type'] ?? '');
+
+            if ($document_id <= 0) {
+                throw new Exception("Invalid document ID.");
+            }
+            if ($document_type === '') {
+                throw new Exception("Document type is required.");
+            }
+
+            // Verify ownership + get existing path
+            $q = "
+                SELECT d.document_id, d.document_path
+                FROM visa_document d
+                JOIN visa_renewal_application a ON a.application_id = d.application_id
+                WHERE d.document_id = ?
+                  AND a.student_id = ?
+                LIMIT 1
+            ";
+            $stmt = $conn->prepare($q);
+            $stmt->bind_param("ii", $document_id, $student_id);
+            $stmt->execute();
+            $existing = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if (!$existing) {
+                throw new Exception("Document not found or not yours.");
+            }
+
+            $dbPath = $existing['document_path'];
+
+            // If a new file is uploaded, replace it
+            if (isset($_FILES['document_file']) && $_FILES['document_file']['error'] === UPLOAD_ERR_OK) {
+                $file = $_FILES['document_file'];
+
+                $maxBytes = 5 * 1024 * 1024; // 5MB
+                if ($file['size'] > $maxBytes) {
+                    throw new Exception("File too large. Max 5MB.");
+                }
+
+                $allowedExt = ['pdf', 'jpg', 'jpeg', 'png'];
+                $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+                if (!in_array($ext, $allowedExt, true)) {
+                    throw new Exception("Invalid file type. Allowed: PDF, JPG, JPEG, PNG.");
+                }
+
+                $uploadDir = __DIR__ . "/../uploads/visa_documents/";
+                if (!is_dir($uploadDir)) {
+                    @mkdir($uploadDir, 0777, true);
+                }
+
+                $safeName = "doc_{$student_id}_" . time() . "_" . bin2hex(random_bytes(6)) . "." . $ext;
+                $fullPath = $uploadDir . $safeName;
+
+                if (!move_uploaded_file($file['tmp_name'], $fullPath)) {
+                    throw new Exception("Failed to upload replacement file.");
+                }
+
+                $dbPath = "../uploads/visa_documents/" . $safeName;
+            }
+
+            // CALL stored procedure
+            $stmt = $conn->prepare("CALL sp_student_update_visa_document(?, ?, ?, ?)");
+            $stmt->bind_param("iiss", $student_id, $document_id, $document_type, $dbPath);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Document updated successfully.";
+        }
+
+        // ---------------------------
+        // Delete document
+        // ---------------------------
+        if ($action === 'delete_document') {
+            $document_id = (int)($_POST['document_id'] ?? 0);
+
+            if ($document_id <= 0) {
+                throw new Exception("Invalid document ID.");
+            }
+
+            $stmt = $conn->prepare("CALL sp_student_delete_visa_document(?, ?)");
+            $stmt->bind_param("ii", $student_id, $document_id);
+            $stmt->execute();
+            $stmt->close();
+            clearStoredResults($conn);
+
+            $success = "Document deleted successfully.";
+        }
+
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+        clearStoredResults($conn);
     }
-    
-    // Redirect to avoid resubmission
-    header("Location: documents.php");
-    exit();
+
+    // Refresh application after actions (just in case)
+    $stmt = $conn->prepare($appSqlActive);
+    $stmt->bind_param("i", $student_id);
+    $stmt->execute();
+    $activeApp = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if ($activeApp) {
+        $app = $activeApp;
+        $currentAppId = $app['application_id'];
+    }
 }
 
-// Fetch student's active renewal applications
-$applications_query = "
-    SELECT application_id, submission_date, requested_months, status 
-    FROM visa_renewal_application 
-    WHERE student_id = ? 
-    AND status != 'Passport collected'
-    ORDER BY submission_date DESC
-";
-$apps_stmt = $conn->prepare($applications_query);
-$apps_stmt->bind_param("i", $student_id);
-$apps_stmt->execute();
-$applications = $apps_stmt->get_result();
-
-// Fetch all documents for the student
-$documents_query = "
-    SELECT 
-        d.document_id,
-        d.document_type,
-        d.document_path,
-        d.upload_date,
-        a.application_id,
-        a.submission_date,
-        a.status as app_status
-    FROM visa_document d
-    JOIN visa_renewal_application a ON d.application_id = a.application_id
-    WHERE a.student_id = ?
-    ORDER BY d.upload_date DESC
-";
-$docs_stmt = $conn->prepare($documents_query);
-$docs_stmt->bind_param("i", $student_id);
-$docs_stmt->execute();
-$documents_result = $docs_stmt->get_result();
-
-// Store documents in array for later use
+// ------------------------------------------------------------
+// Fetch documents for current app
+// ------------------------------------------------------------
 $documents = [];
-while ($doc = $documents_result->fetch_assoc()) {
-    $documents[] = $doc;
+if ($currentAppId) {
+    $stmt = $conn->prepare("
+        SELECT document_id, document_type, document_path, upload_date
+        FROM visa_document
+        WHERE application_id = ?
+        ORDER BY upload_date DESC, document_id DESC
+    ");
+    $stmt->bind_param("i", $currentAppId);
+    $stmt->execute();
+    $documents = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
 }
-$documents_result->close();
-
-// Check for success/error messages from session
-$success_message = $_SESSION['success_message'] ?? '';
-$error_message = $_SESSION['error_message'] ?? '';
-unset($_SESSION['success_message'], $_SESSION['error_message']);
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo $page_title; ?></title>
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
-    <style>
-        .document-actions .btn {
-            padding: 0.25rem 0.5rem;
-        }
-        .file-icon {
-            font-size: 1.25rem;
-            width: 30px;
-        }
-        .modal-backdrop {
-            z-index: 1040;
-        }
-        .modal {
-            z-index: 1050;
-        }
-        .cursor-pointer {
-            cursor: pointer;
-        }
-    </style>
-</head>
-<body>
-<div class="container-fluid py-4">
-    <!-- Page Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
+<div class="container-fluid">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
         <div>
-            <h1 class="h3 fw-bold mb-1"><i class="bi bi-folder me-2"></i>My Documents</h1>
-            <p class="text-muted mb-0">Upload and manage your visa renewal documents</p>
-        </div>
-        <div class="bg-primary text-white rounded p-3">
-            <div class="h5 mb-0">ID: <?php echo $student_id; ?></div>
-            <small class="opacity-75">Student ID</small>
+            <h2 class="mb-0">My Documents</h2>
+            <div class="text-muted">Upload, view, edit, and delete your documents for your latest application.</div>
         </div>
     </div>
-    
-    <!-- Success/Error Messages -->
-    <?php if ($upload_success): ?>
-    <div class="alert alert-success alert-dismissible fade show" role="alert">
-        <i class="bi bi-check-circle-fill me-2"></i>
-        <strong>Success!</strong> Document uploaded successfully.
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-    <?php elseif (!empty($upload_error)): ?>
-    <div class="alert alert-danger alert-dismissible fade show" role="alert">
-        <i class="bi bi-exclamation-triangle-fill me-2"></i>
-        <strong>Error!</strong> <?php echo htmlspecialchars($upload_error); ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
+
+    <?php if ($success): ?>
+        <div class="alert alert-success"><?php echo h($success); ?></div>
     <?php endif; ?>
-    
-    <?php if (!empty($success_message)): ?>
-    <div class="alert alert-success alert-dismissible fade show" role="alert">
-        <i class="bi bi-check-circle-fill me-2"></i>
-        <?php echo htmlspecialchars($success_message); ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
+    <?php if ($error): ?>
+        <div class="alert alert-danger"><?php echo h($error); ?></div>
     <?php endif; ?>
-    
-    <?php if (!empty($error_message)): ?>
-    <div class="alert alert-danger alert-dismissible fade show" role="alert">
-        <i class="bi bi-exclamation-triangle-fill me-2"></i>
-        <?php echo htmlspecialchars($error_message); ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-    <?php endif; ?>
-    
-    <!-- Upload Document Card -->
-    <div class="card border-0 shadow-sm mb-4">
-        <div class="card-header bg-primary text-white">
-            <h5 class="mb-0"><i class="bi bi-upload me-2"></i> Upload New Document</h5>
-        </div>
+
+    <!-- Application Info -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold">Application Info</div>
         <div class="card-body">
-            <form method="POST" enctype="multipart/form-data" action="">
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label for="application_id" class="form-label">Select Application <span class="text-danger">*</span></label>
-                        <select class="form-select" id="application_id" name="application_id" required>
-                            <option value="">Choose an application...</option>
-                            <?php if ($applications->num_rows > 0): ?>
-                                <?php while ($app = $applications->fetch_assoc()): ?>
-                                <option value="<?php echo $app['application_id']; ?>">
-                                    Application #<?php echo $app['application_id']; ?> 
-                                    (Submitted: <?php echo date('M d, Y', strtotime($app['submission_date'])); ?>)
-                                </option>
-                                <?php endwhile; ?>
-                            <?php else: ?>
-                                <option value="" disabled>No active applications found</option>
-                            <?php endif; ?>
-                        </select>
-                        <?php if ($applications->num_rows == 0): ?>
-                        <div class="form-text text-warning">
-                            You need to submit a visa renewal application first.
-                            <a href="renewal.php" class="text-decoration-none">Apply for renewal</a>
-                        </div>
-                        <?php endif; ?>
+            <?php if ($app): ?>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div class="small text-muted">Application ID</div>
+                        <div class="fw-semibold"><?php echo h($app['application_id']); ?></div>
                     </div>
-                    
-                    <div class="col-md-6 mb-3">
-                        <label for="document_type" class="form-label">Document Type <span class="text-danger">*</span></label>
-                        <select class="form-select" id="document_type" name="document_type" required>
-                            <option value="">Select document type...</option>
-                            <?php foreach ($document_types as $type => $desc): ?>
-                            <option value="<?php echo htmlspecialchars($type); ?>">
-                                <?php echo htmlspecialchars($type); ?>
-                            </option>
-                            <?php endforeach; ?>
-                        </select>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Submission Date</div>
+                        <div class="fw-semibold"><?php echo h($app['submission_date']); ?></div>
                     </div>
-                    
-                    <div class="col-12 mb-3">
-                        <label for="document_file" class="form-label">Select File <span class="text-danger">*</span></label>
-                        <input type="file" class="form-control" id="document_file" name="document_file" accept=".pdf,.jpg,.jpeg,.png,.gif" required>
-                        <div class="form-text">
-                            Accepted formats: PDF, JPG, PNG, GIF (Max: 10MB)
-                        </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Requested Months</div>
+                        <div class="fw-semibold"><?php echo h($app['requested_months']); ?></div>
                     </div>
-                    
-                    <div class="col-12 mb-3">
-                        <label for="description" class="form-label">Description (Optional)</label>
-                        <textarea class="form-control" id="description" name="description" rows="2" placeholder="Add any notes about this document..."></textarea>
-                    </div>
-                    
-                    <div class="col-12">
-                        <button type="submit" name="upload_document" class="btn btn-primary">
-                            <i class="bi bi-upload me-2"></i> Upload Document
-                        </button>
-                        <button type="reset" class="btn btn-outline-secondary">Clear Form</button>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Status</div>
+                        <span class="badge bg-dark"><?php echo h($app['status']); ?></span>
                     </div>
                 </div>
-            </form>
-        </div>
-    </div>
-    
-    <!-- Document List Card -->
-    <div class="card border-0 shadow-sm">
-        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-            <h5 class="mb-0"><i class="bi bi-files me-2"></i> My Documents</h5>
-            <span class="badge bg-light text-dark">
-                <?php echo count($documents); ?> document(s)
-            </span>
-        </div>
-        <div class="card-body">
-            <?php if (count($documents) > 0): ?>
-            <div class="table-responsive">
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>Document Type</th>
-                            <th>Application ID</th>
-                            <th>Upload Date</th>
-                            <th>File</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($documents as $doc): ?>
-                        <?php
-                        // Get file icon based on extension
-                        $file_ext = pathinfo($doc['document_path'], PATHINFO_EXTENSION);
-                        $file_icon = 'bi-file-earmark';
-                        $file_color = 'text-secondary';
-                        
-                        switch(strtolower($file_ext)) {
-                            case 'pdf': $file_icon = 'bi-file-earmark-pdf'; $file_color = 'text-danger'; break;
-                            case 'jpg':
-                            case 'jpeg':
-                            case 'png':
-                            case 'gif': $file_icon = 'bi-file-earmark-image'; $file_color = 'text-success'; break;
-                            default: $file_icon = 'bi-file-earmark'; $file_color = 'text-secondary';
-                        }
-                        
-                        // Get file size
-                        $file_size = file_exists($doc['document_path']) ? filesize($doc['document_path']) : 0;
-                        $file_size_formatted = $file_size > 0 ? round($file_size / 1024 / 1024, 2) . ' MB' : 'N/A';
-                        ?>
-                        <tr id="row-<?php echo $doc['document_id']; ?>">
-                            <td>
-                                <div class="fw-semibold"><?php echo htmlspecialchars($doc['document_type']); ?></div>
-                                <?php if (isset($document_types[$doc['document_type']])): ?>
-                                <small class="text-muted"><?php echo htmlspecialchars($document_types[$doc['document_type']]); ?></small>
-                                <?php endif; ?>
-                            </td>
-                            <td>
-                                <span class="badge bg-info">#<?php echo $doc['application_id']; ?></span><br>
-                                <small class="text-muted"><?php echo date('M d, Y', strtotime($doc['submission_date'])); ?></small>
-                            </td>
-                            <td>
-                                <?php echo date('M d, Y', strtotime($doc['upload_date'])); ?><br>
-                                <small class="text-muted"><?php echo date('H:i', strtotime($doc['upload_date'])); ?></small>
-                            </td>
-                            <td>
-                                <div class="d-flex align-items-center">
-                                    <i class="bi <?php echo $file_icon; ?> file-icon me-2 <?php echo $file_color; ?>"></i>
-                                    <div>
-                                        <div><?php echo strtoupper($file_ext); ?> File</div>
-                                        <small class="text-muted"><?php echo $file_size_formatted; ?></small>
-                                    </div>
-                                </div>
-                            </td>
-                            <td>
-                                <div class="document-actions">
-                                    <a href="<?php echo htmlspecialchars($doc['document_path']); ?>" 
-                                       target="_blank" 
-                                       class="btn btn-sm btn-outline-primary me-1"
-                                       title="View Document">
-                                        <i class="bi bi-eye"></i>
-                                    </a>
-                                    <a href="<?php echo htmlspecialchars($doc['document_path']); ?>" 
-                                       download
-                                       class="btn btn-sm btn-outline-success me-1"
-                                       title="Download">
-                                        <i class="bi bi-download"></i>
-                                    </a>
-                                    <button type="button" 
-                                            class="btn btn-sm btn-outline-danger delete-btn"
-                                            data-doc-id="<?php echo $doc['document_id']; ?>"
-                                            data-doc-type="<?php echo htmlspecialchars($doc['document_type']); ?>"
-                                            data-app-id="<?php echo $doc['application_id']; ?>"
-                                            title="Delete">
-                                        <i class="bi bi-trash"></i>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
             <?php else: ?>
-            <div class="text-center py-5">
-                <i class="bi bi-inbox fs-1 text-muted mb-3"></i>
-                <h5>No Documents Found</h5>
-                <p class="text-muted mb-3">You haven't uploaded any documents yet.</p>
-                <p class="text-muted">Upload documents using the form above to get started.</p>
-            </div>
+                <div class="text-muted">No application found yet. Please submit a renewal application first.</div>
             <?php endif; ?>
         </div>
     </div>
-    
-    <!-- Help Information -->
-    <div class="row mt-4">
-        <div class="col-md-6">
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-info text-white">
-                    <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i> Document Requirements</h6>
-                </div>
-                <div class="card-body">
-                    <ul class="mb-0">
-                        <li>All documents must be clear and legible</li>
-                        <li>Passport copies should show all 4 corners</li>
-                        <li>Files should not exceed 10MB</li>
-                        <li>Use PDF format for multi-page documents</li>
-                        <li>Keep original documents for verification</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-warning text-dark">
-                    <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i> Processing Time</h6>
-                </div>
-                <div class="card-body">
-                    <ul class="mb-0">
-                        <li>Documents are reviewed within 3-5 working days</li>
-                        <li>Incomplete submissions will be rejected</li>
-                        <li>You'll receive email notifications</li>
-                        <li>Check application status regularly</li>
-                    </ul>
-                </div>
-            </div>
+
+    <!-- Upload New Document -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold">Upload New Document</div>
+        <div class="card-body">
+            <?php if (!$currentAppId): ?>
+                <div class="text-muted">You need an application first before you can upload documents.</div>
+            <?php else: ?>
+                <form method="post" enctype="multipart/form-data" class="row g-3">
+                    <input type="hidden" name="action" value="add_document">
+
+                    <div class="col-md-5">
+                        <label class="form-label">Document Type</label>
+                        <input type="text" name="document_type" class="form-control" required placeholder="e.g., Passport Copy">
+                    </div>
+
+                    <div class="col-md-5">
+                        <label class="form-label">Choose File</label>
+                        <input type="file" name="document_file" class="form-control" required>
+                        <div class="form-text">Allowed: PDF/JPG/PNG, max 5MB.</div>
+                    </div>
+
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button class="btn btn-success w-100">
+                            <i class="bi bi-upload"></i> Upload
+                        </button>
+                    </div>
+                </form>
+            <?php endif; ?>
         </div>
     </div>
-</div>
 
-<!-- Delete Confirmation Modal (Single Modal for all deletions) -->
-<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Confirm Delete</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <p>Are you sure you want to delete this document?</p>
-                <div class="alert alert-warning">
-                    <i class="bi bi-exclamation-triangle me-2"></i>
-                    This action cannot be undone. The file will be permanently deleted.
-                </div>
-                <p><strong>Document:</strong> <span id="deleteDocType"></span></p>
-                <p><strong>Application:</strong> #<span id="deleteAppId"></span></p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <a href="#" class="btn btn-danger" id="confirmDeleteBtn">Delete Document</a>
-            </div>
+    <!-- Documents List -->
+    <div class="card mb-5">
+        <div class="card-header fw-semibold">Your Uploaded Documents</div>
+        <div class="card-body">
+            <?php if (!$currentAppId): ?>
+                <div class="text-muted">No documents to show.</div>
+            <?php else: ?>
+                <?php if (!$documents): ?>
+                    <div class="text-muted">No documents uploaded yet.</div>
+                <?php else: ?>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead>
+                            <tr>
+                                <th>Document ID</th>
+                                <th>Type</th>
+                                <th>File</th>
+                                <th>Upload Date</th>
+                                <th style="width: 260px;">Actions</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($documents as $d): ?>
+                                <tr>
+                                    <td><?php echo h($d['document_id']); ?></td>
+                                    <td class="fw-semibold"><?php echo h($d['document_type']); ?></td>
+                                    <td>
+                                        <?php if (!empty($d['document_path'])): ?>
+                                            <a href="<?php echo h($d['document_path']); ?>" target="_blank">View</a>
+                                        <?php else: ?>
+                                            <span class="text-muted">-</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><?php echo h($d['upload_date']); ?></td>
+                                    <td>
+                                        <!-- Edit -->
+                                        <button class="btn btn-sm btn-outline-primary" type="button"
+                                                data-bs-toggle="collapse"
+                                                data-bs-target="#editDoc<?php echo (int)$d['document_id']; ?>">
+                                            Edit
+                                        </button>
+
+                                        <!-- Delete -->
+                                        <form method="post" class="d-inline" onsubmit="return confirm('Delete this document?');">
+                                            <input type="hidden" name="action" value="delete_document">
+                                            <input type="hidden" name="document_id" value="<?php echo (int)$d['document_id']; ?>">
+                                            <button class="btn btn-sm btn-outline-danger" type="submit">
+                                                Delete
+                                            </button>
+                                        </form>
+
+                                        <!-- Edit Collapse -->
+                                        <div class="collapse mt-2" id="editDoc<?php echo (int)$d['document_id']; ?>">
+                                            <div class="border rounded p-2">
+                                                <form method="post" enctype="multipart/form-data" class="row g-2">
+                                                    <input type="hidden" name="action" value="update_document">
+                                                    <input type="hidden" name="document_id" value="<?php echo (int)$d['document_id']; ?>">
+
+                                                    <div class="col-12">
+                                                        <label class="form-label small mb-1">Document Type</label>
+                                                        <input type="text" name="document_type" class="form-control"
+                                                               value="<?php echo h($d['document_type']); ?>" required>
+                                                    </div>
+
+                                                    <div class="col-12">
+                                                        <label class="form-label small mb-1">Replace File (optional)</label>
+                                                        <input type="file" name="document_file" class="form-control">
+                                                        <div class="form-text">If empty, it keeps the current file.</div>
+                                                    </div>
+
+                                                    <div class="col-12">
+                                                        <button class="btn btn-sm btn-primary" type="submit">
+                                                            Save Changes
+                                                        </button>
+                                                    </div>
+                                                </form>
+                                            </div>
+                                        </div>
+
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
+            <?php endif; ?>
         </div>
     </div>
+
 </div>
 
-<!-- Bootstrap JS with Popper -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-// Document ready function
-document.addEventListener('DOMContentLoaded', function() {
-    // Handle delete button clicks
-    const deleteButtons = document.querySelectorAll('.delete-btn');
-    const deleteConfirmModal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
-    const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
-    const deleteDocType = document.getElementById('deleteDocType');
-    const deleteAppId = document.getElementById('deleteAppId');
-    
-    let currentDocId = null;
-    
-    deleteButtons.forEach(button => {
-        button.addEventListener('click', function(e) {
-            e.preventDefault();
-            
-            currentDocId = this.getAttribute('data-doc-id');
-            const docType = this.getAttribute('data-doc-type');
-            const appId = this.getAttribute('data-app-id');
-            
-            // Update modal content
-            deleteDocType.textContent = docType;
-            deleteAppId.textContent = appId;
-            
-            // Set delete URL
-            confirmDeleteBtn.href = `documents.php?delete=${currentDocId}`;
-            
-            // Show modal
-            deleteConfirmModal.show();
-        });
-    });
-    
-    // Clear currentDocId when modal is hidden
-    document.getElementById('deleteConfirmModal').addEventListener('hidden.bs.modal', function() {
-        currentDocId = null;
-    });
-    
-    // Handle confirm delete button click
-    confirmDeleteBtn.addEventListener('click', function(e) {
-        if (currentDocId) {
-            // Add a small delay to allow modal to close
-            setTimeout(() => {
-                // You could also add AJAX here if you want to avoid page reload
-                window.location.href = this.href;
-            }, 100);
-        }
-    });
-});
-</script>
-
-<?php
-// Close database connections
-if (isset($apps_stmt)) $apps_stmt->close();
-if (isset($docs_stmt)) $docs_stmt->close();
-?>
-</body>
-</html>
+<?php require_once __DIR__ . "/footer.php"; ?>
