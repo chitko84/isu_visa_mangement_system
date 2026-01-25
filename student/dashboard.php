@@ -7,15 +7,6 @@ require_once __DIR__ . "/header.php"; // session + db ($conn) + $student_id
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
-function clearStoredResults(mysqli $conn): void {
-    while ($conn->more_results()) {
-        $conn->next_result();
-        if ($res = $conn->store_result()) {
-            $res->free();
-        }
-    }
-}
-
 function h($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 }
@@ -40,6 +31,20 @@ function badgeForDays(?int $days): array {
     return ['success', $days . " days left"];
 }
 
+/**
+ * IMPORTANT (matches your profile.php):
+ * - DB stores profile_photo like "uploads/profile/xxx.png" (relative to /student/)
+ * - dashboard.php is also inside /student/
+ */
+function photoUrlFromDb(?string $path): string {
+    $default = "uploads/default_image.png";
+    if (!$path) return $default;
+
+    if (preg_match('/^https?:\/\//i', $path)) return $path;
+
+    return ltrim($path, '/');
+}
+
 // ------------------------------------------------------------
 // Data holders
 // ------------------------------------------------------------
@@ -52,6 +57,7 @@ $renewalRow    = null;
 $insuranceRow  = null;
 $exitRow       = null;
 $nationalities = [];
+$recentUsers   = [];
 
 // ------------------------------------------------------------
 // 1) Student + Program + School
@@ -91,9 +97,7 @@ try {
     $stmt->execute();
     $visaRow = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-} catch (Throwable $e) {
-    // keep silent if no record
-}
+} catch (Throwable $e) {}
 
 // ------------------------------------------------------------
 // 3) Latest Renewal (visa_renewal_application)
@@ -110,13 +114,10 @@ try {
     $stmt->execute();
     $renewalRow = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-} catch (Throwable $e) {
-    // keep silent if no record
-}
+} catch (Throwable $e) {}
 
 // ------------------------------------------------------------
 // 4) Latest Insurance (insurance_policy + insurance_provider)
-// NOTE: your table name is insurance_policy (not insuranc_policy)
 // ------------------------------------------------------------
 try {
     $stmt = $conn->prepare("
@@ -133,9 +134,7 @@ try {
     $stmt->execute();
     $insuranceRow = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-} catch (Throwable $e) {
-    // keep silent if no record
-}
+} catch (Throwable $e) {}
 
 // ------------------------------------------------------------
 // 5) Latest Exit Case (exit_case)
@@ -152,9 +151,7 @@ try {
     $stmt->execute();
     $exitRow = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-} catch (Throwable $e) {
-    // keep silent if no record
-}
+} catch (Throwable $e) {}
 
 // ------------------------------------------------------------
 // 6) Nationality (nationality + country)
@@ -171,8 +168,23 @@ try {
     $stmt->execute();
     $nationalities = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
+} catch (Throwable $e) {}
+
+// ------------------------------------------------------------
+// 7) Recently Registered Students (LATEST 5)
+// ------------------------------------------------------------
+try {
+    $stmt = $conn->prepare("
+        SELECT student_id, first_name, last_name, email, phone, status, student_type, profile_photo, created_at
+        FROM student
+        ORDER BY created_at DESC, student_id DESC
+        LIMIT 5
+    ");
+    $stmt->execute();
+    $recentUsers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
 } catch (Throwable $e) {
-    // keep silent if no record
+    // don't block dashboard
 }
 
 // ------------------------------------------------------------
@@ -198,7 +210,125 @@ $insDays  = daysLeft($insExpiry);
 [$visaBadge, $visaBadgeText] = badgeForDays($visaDays);
 [$insBadge,  $insBadgeText]  = badgeForDays($insDays);
 
+// ------------------------------------------------------------
+// 8) Chart Data
+// ------------------------------------------------------------
+
+// A) Days left: Visa vs Insurance
+$visaDaysLeft = $visaDays ?? 0;
+$insDaysLeft  = $insDays ?? 0;
+
+// clamp negative (expired) to 0 for nicer chart
+$visaDaysLeftChart = max(0, (int)$visaDaysLeft);
+$insDaysLeftChart  = max(0, (int)$insDaysLeft);
+
 ?>
+
+<style>
+.cover-image {
+    object-fit: cover;
+    width: 46px;
+    height: 46px;
+    border-radius: 999px;
+    border: 2px solid #e5e7eb;
+    background: #fff;
+}
+
+/* ---------- Students list (like screenshot) ---------- */
+.students-card-title{
+    font-size: 1.25rem;
+    font-weight: 800;
+}
+
+.student-list{
+    display:flex;
+    flex-direction:column;
+    gap:18px;
+}
+
+.student-item{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:14px;
+}
+
+.student-left{
+    display:flex;
+    align-items:flex-start;
+    gap:12px;
+    min-width:0;
+}
+
+.student-avatar{
+    width:56px;
+    height:56px;
+    border-radius:999px;
+    object-fit:cover;
+    border:3px solid #e6eefc;
+    background:#fff;
+    flex:0 0 auto;
+}
+
+.student-meta{
+    min-width:0;
+}
+
+.student-badge{
+    display:inline-block;
+    font-size:12px;
+    font-weight:700;
+    padding:4px 10px;
+    border-radius:999px;
+    background:#eaf2ff;
+    color:#1f5eff;
+    line-height:1;
+    margin-bottom:6px;
+}
+
+.student-name{
+    font-weight:800;
+    margin:0;
+    line-height:1.2;
+}
+
+.student-email{
+    margin-top:4px;
+    color:#8a8f99;
+    font-size:.95rem;
+    word-break:break-word;
+}
+
+.student-right{
+    text-align:right;
+    white-space:nowrap;
+}
+
+.student-phone{
+    font-weight:800;
+    color:#1f5eff;
+}
+
+.student-phone-sub{
+    display:block;
+    margin-top:3px;
+    font-weight:800;
+    color:#1f5eff;
+}
+
+.student-extra{
+    margin-top:6px;
+    font-size:.9rem;
+    color:#6b7280;
+}
+
+.student-divider{
+    height:1px;
+    background:#f0f2f6;
+    margin-top:16px;
+}
+</style>
+
 <div class="container-fluid">
 
     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -342,7 +472,27 @@ $insDays  = daysLeft($insExpiry);
 
     </div>
 
-    <!-- Details -->
+    <!-- Charts Row -->
+    <div class="row g-3 mt-1">
+
+        <!-- Days left chart -->
+        <div class="col-lg-7">
+            <div class="card h-100">
+                <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                    <span>My Expiry Overview</span>
+                    <small class="text-muted">Days left (0 if expired)</small>
+                </div>
+                <div class="card-body">
+                    <div style="height:260px;">
+                        <canvas id="daysLeftChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Details Row -->
     <div class="row g-3 mt-1">
 
         <!-- Student Summary -->
@@ -452,6 +602,119 @@ $insDays  = daysLeft($insExpiry);
 
     </div>
 
+    <!-- Recently Registered Students (NEW DESIGN + ALL INFO) -->
+    <div class="row g-3 mt-1">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="students-card-title">Students</div>
+                        <span class="text-muted small">Latest students who registered</span>
+                    </div>
+
+                    <?php if (!$recentUsers): ?>
+                        <div class="text-muted">No student records found.</div>
+                    <?php else: ?>
+                        <div class="student-list">
+                            <?php foreach ($recentUsers as $index => $u): ?>
+                                <?php
+                                    $name  = trim(($u['first_name'] ?? '') . ' ' . ($u['last_name'] ?? ''));
+                                    $name  = $name ?: ('Student #' . (int)$u['student_id']);
+                                    $email2 = $u['email'] ?? '-';
+                                    $phone2 = $u['phone'] ?? '-';
+
+                                    $badge = trim((string)($u['student_type'] ?? ''));
+                                    if ($badge === '') $badge = 'STUDENT';
+
+                                    $phoneTop = $phone2;
+                                    $phoneBottom = '';
+                                    $digitsOnly = preg_replace('/\s+/', '', (string)$phone2);
+                                    if ($phone2 !== '-' && strlen($digitsOnly) >= 10) {
+                                        $phoneTop = substr($phone2, 0, max(0, strlen($phone2) - 4));
+                                        $phoneBottom = substr($phone2, -4);
+                                    }
+                                ?>
+
+                                <div class="student-item">
+                                    <div class="student-left">
+                                        <img
+                                            src="<?php echo h(photoUrlFromDb($u['profile_photo'] ?? null)); ?>"
+                                            class="student-avatar"
+                                            alt="Profile">
+
+                                        <div class="student-meta">
+                                            <span class="student-badge"><?php echo h($badge); ?></span>
+                                            <p class="student-name"><?php echo h($name); ?></p>
+                                            <div class="student-email"><?php echo h($email2); ?></div>
+
+                                            <div class="student-extra">
+                                                <div><strong>ID:</strong> <?php echo (int)$u['student_id']; ?></div>
+                                                <div><strong>Status:</strong> <?php echo h($u['status'] ?? '-'); ?></div>
+                                                <div><strong>Type:</strong> <?php echo h($u['student_type'] ?? '-'); ?></div>
+                                                <div><strong>Registered:</strong> <?php echo h(fmtDate($u['created_at'] ?? null)); ?></div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="student-right">
+                                        <?php if ($phone2 !== '-'): ?>
+                                            <span class="student-phone"><?php echo h(trim($phoneTop)); ?></span>
+                                            <?php if ($phoneBottom): ?>
+                                                <span class="student-phone-sub"><?php echo h($phoneBottom); ?></span>
+                                            <?php endif; ?>
+                                        <?php else: ?>
+                                            <span class="text-muted">-</span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+
+                                <?php if ($index < count($recentUsers) - 1): ?>
+                                    <div class="student-divider"></div>
+                                <?php endif; ?>
+
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
 </div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+(() => {
+    // 1) Bar chart: Visa vs Insurance days left
+    const visaDays = <?php echo (int)$visaDaysLeftChart; ?>;
+    const insDays  = <?php echo (int)$insDaysLeftChart; ?>;
+
+    const ctx1 = document.getElementById('daysLeftChart');
+    if (ctx1) {
+        new Chart(ctx1, {
+            type: 'bar',
+            data: {
+                labels: ['Visa', 'Insurance'],
+                datasets: [{
+                    label: 'Days Left',
+                    data: [visaDays, insDays],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, ticks: { precision: 0 } }
+                }
+            }
+        });
+    }
+
+})();
+</script>
 
 <?php require_once __DIR__ . "/footer.php"; ?>

@@ -48,41 +48,85 @@ $currentVisa = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
 // ------------------------------------------------------------
-// Fetch latest exit case for this student (by request_date)
+// Fetch ALL exit cases for this student (repeating group demo)
 // ------------------------------------------------------------
-$exitCase = null;
+$exitCases = [];
 $stmt = $conn->prepare("
     SELECT exit_id, student_id, exit_type, request_date, exit_status
     FROM exit_case
     WHERE student_id = ?
     ORDER BY request_date DESC, exit_id DESC
-    LIMIT 1
 ");
 $stmt->bind_param("i", $student_id);
 $stmt->execute();
-$exitCase = $stmt->get_result()->fetch_assoc();
+$exitCases = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-$currentExitId = $exitCase['exit_id'] ?? null;
+// ------------------------------------------------------------
+// Choose selected exit_id (from ?exit_id=...) or default to latest
+// ------------------------------------------------------------
+$selectedExitId = null;
+if (isset($_GET['exit_id'])) {
+    $selectedExitId = (int)$_GET['exit_id'];
+}
+
+// If user didn't pass exit_id, default to latest (first row)
+if (!$selectedExitId && !empty($exitCases)) {
+    $selectedExitId = (int)$exitCases[0]['exit_id'];
+}
+
+// Validate selectedExitId belongs to this student
+$exitCase = null;
+if ($selectedExitId) {
+    $stmt = $conn->prepare("
+        SELECT exit_id, student_id, exit_type, request_date, exit_status
+        FROM exit_case
+        WHERE exit_id = ? AND student_id = ?
+        LIMIT 1
+    ");
+    $stmt->bind_param("ii", $selectedExitId, $student_id);
+    $stmt->execute();
+    $exitCase = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$exitCase) {
+        // fallback to latest
+        $selectedExitId = !empty($exitCases) ? (int)$exitCases[0]['exit_id'] : null;
+        $exitCase = !empty($exitCases) ? $exitCases[0] : null;
+    }
+}
+
+
+// Decide if student can submit new exit request
+// Rule: allow if no exit case OR latest is Completed
+$canSubmitExit = true;
+if (!empty($exitCases)) {
+    $latest = $exitCases[0];
+    if (($latest['exit_status'] ?? '') !== 'Completed') {
+        $canSubmitExit = false;
+    }
+}
 
 // ------------------------------------------------------------
-// Fetch clearance record (one-to-one with exit_id - UNIQUE exit_id)
+// Fetch clearance record (one-to-one with exit_id)
 // ------------------------------------------------------------
 $clearance = null;
-if ($currentExitId) {
+$currentClearanceId = null;
+
+if ($selectedExitId) {
     $stmt = $conn->prepare("
         SELECT clearance_id, exit_id, submission_date, status
         FROM clearance_record
         WHERE exit_id = ?
         LIMIT 1
     ");
-    $stmt->bind_param("i", $currentExitId);
+    $stmt->bind_param("i", $selectedExitId);
     $stmt->execute();
     $clearance = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-}
 
-$currentClearanceId = $clearance['clearance_id'] ?? null;
+    $currentClearanceId = $clearance['clearance_id'] ?? null;
+}
 
 // ------------------------------------------------------------
 // Fetch unit clearance list (by clearance_id)
@@ -105,26 +149,17 @@ if ($currentClearanceId) {
 // Fetch exit visa actions list (by exit_id)
 // ------------------------------------------------------------
 $visaActions = [];
-if ($currentExitId) {
+if ($selectedExitId) {
     $stmt = $conn->prepare("
         SELECT exit_visa_id, exit_id, action_type, action_date, remarks
         FROM exit_visa_action
         WHERE exit_id = ?
         ORDER BY action_date DESC, exit_visa_id DESC
     ");
-    $stmt->bind_param("i", $currentExitId);
+    $stmt->bind_param("i", $selectedExitId);
     $stmt->execute();
     $visaActions = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
-}
-
-// ------------------------------------------------------------
-// Decide if student can submit new exit request
-// (Simple rule: allow if no exit case OR latest is Completed)
-// ------------------------------------------------------------
-$canSubmitExit = true;
-if ($exitCase && ($exitCase['exit_status'] ?? '') !== 'Completed') {
-    $canSubmitExit = false;
 }
 
 // ------------------------------------------------------------
@@ -132,6 +167,7 @@ if ($exitCase && ($exitCase['exit_status'] ?? '') !== 'Completed') {
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+    $postExitId = (int)($_POST['exit_id'] ?? 0); // allow forms to pass exit_id explicitly
 
     try {
 
@@ -142,7 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'submit_exit') {
 
             if (!$canSubmitExit) {
-                throw new Exception("You already have an exit request in progress. You can only submit a new one when the current case is completed.");
+                throw new Exception("You already have an exit request in progress. You can only submit a new one when the latest case is completed.");
             }
 
             $exit_type = trim($_POST['exit_type'] ?? '');
@@ -168,11 +204,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Failed to create exit request.");
             }
 
+            // make newly created exit the selected one
+            $selectedExitId = $newExitId;
+
             $success = "Exit request submitted successfully. Exit ID: {$newExitId}";
         }
 
         // ---------------------------
-        // Staff/Admin: update exit status (hidden for students)
+        // Staff/Admin: update exit status
         // sp_staff_update_exit_status(IN exit_id, IN new_status)
         // ---------------------------
         if ($action === 'staff_update_exit_status') {
@@ -193,13 +232,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
             clearStoredResults($conn);
 
+            // keep selection on the updated exit case
+            $selectedExitId = $exit_id;
+
             $success = "Exit status updated.";
         }
 
         // ---------------------------
         // Staff/Admin: create clearance record (one per exit case)
         // sp_staff_create_clearance_record(IN exit_id, IN status, OUT clearance_id)
-        // clearance_record.status CHECK ('In Progress','Completed')
         // ---------------------------
         if ($action === 'staff_create_clearance') {
             if (!in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)) {
@@ -218,6 +259,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute();
             $stmt->close();
             clearStoredResults($conn);
+
+            $selectedExitId = $exit_id;
 
             $success = "Clearance record created.";
         }
@@ -247,6 +290,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
             clearStoredResults($conn);
 
+            // keep selection based on form exit_id (if provided)
+            if ($postExitId > 0) $selectedExitId = $postExitId;
+
             $success = "Unit clearance saved.";
         }
 
@@ -273,6 +319,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
             clearStoredResults($conn);
 
+            if ($postExitId > 0) $selectedExitId = $postExitId;
+
             $success = "Unit clearance updated.";
         }
 
@@ -293,6 +341,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute();
             $stmt->close();
             clearStoredResults($conn);
+
+            if ($postExitId > 0) $selectedExitId = $postExitId;
 
             $success = "Unit clearance deleted.";
         }
@@ -323,6 +373,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
             clearStoredResults($conn);
 
+            $selectedExitId = $exit_id;
+
             $success = "Exit visa action added.";
         }
 
@@ -352,6 +404,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
             clearStoredResults($conn);
 
+            if ($postExitId > 0) $selectedExitId = $postExitId;
+
             $success = "Exit visa action updated.";
         }
 
@@ -373,6 +427,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
             clearStoredResults($conn);
 
+            if ($postExitId > 0) $selectedExitId = $postExitId;
+
             $success = "Exit visa action deleted.";
         }
 
@@ -381,39 +437,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         clearStoredResults($conn);
     }
 
-    // --------------------------------------------------------
-    // Re-fetch everything after actions
-    // --------------------------------------------------------
+    // ✅ NO REDIRECT (prevents "headers already sent" error)
+    // Re-fetch all data so the page shows updated results immediately.
+
+    // Re-fetch exit cases
     $stmt = $conn->prepare("
         SELECT exit_id, student_id, exit_type, request_date, exit_status
         FROM exit_case
         WHERE student_id = ?
         ORDER BY request_date DESC, exit_id DESC
-        LIMIT 1
     ");
     $stmt->bind_param("i", $student_id);
     $stmt->execute();
-    $exitCase = $stmt->get_result()->fetch_assoc();
+    $exitCases = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
 
-    $currentExitId = $exitCase['exit_id'] ?? null;
+    // Keep selected exit id if possible
+    if (!$selectedExitId && !empty($exitCases)) {
+        $selectedExitId = (int)$exitCases[0]['exit_id'];
+    }
 
+    // Re-resolve selected exit case
+    $exitCase = null;
+    if ($selectedExitId) {
+        foreach ($exitCases as $ec) {
+            if ((int)$ec['exit_id'] === (int)$selectedExitId) {
+                $exitCase = $ec;
+                break;
+            }
+        }
+        if (!$exitCase && !empty($exitCases)) {
+            $selectedExitId = (int)$exitCases[0]['exit_id'];
+            $exitCase = $exitCases[0];
+        }
+    }
+
+    // Update submit rule
+    $canSubmitExit = true;
+    if (!empty($exitCases)) {
+        $latest = $exitCases[0];
+        if (($latest['exit_status'] ?? '') !== 'Completed') {
+            $canSubmitExit = false;
+        }
+    }
+
+    // Re-fetch clearance
     $clearance = null;
-    if ($currentExitId) {
+    $currentClearanceId = null;
+
+    if ($selectedExitId) {
         $stmt = $conn->prepare("
             SELECT clearance_id, exit_id, submission_date, status
             FROM clearance_record
             WHERE exit_id = ?
             LIMIT 1
         ");
-        $stmt->bind_param("i", $currentExitId);
+        $stmt->bind_param("i", $selectedExitId);
         $stmt->execute();
         $clearance = $stmt->get_result()->fetch_assoc();
         $stmt->close();
+
+        $currentClearanceId = $clearance['clearance_id'] ?? null;
     }
 
-    $currentClearanceId = $clearance['clearance_id'] ?? null;
-
+    // Re-fetch unit clearances
     $unitClearances = [];
     if ($currentClearanceId) {
         $stmt = $conn->prepare("
@@ -428,23 +515,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->close();
     }
 
+    // Re-fetch exit visa actions
     $visaActions = [];
-    if ($currentExitId) {
+    if ($selectedExitId) {
         $stmt = $conn->prepare("
             SELECT exit_visa_id, exit_id, action_type, action_date, remarks
             FROM exit_visa_action
             WHERE exit_id = ?
             ORDER BY action_date DESC, exit_visa_id DESC
         ");
-        $stmt->bind_param("i", $currentExitId);
+        $stmt->bind_param("i", $selectedExitId);
         $stmt->execute();
         $visaActions = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         $stmt->close();
-    }
-
-    $canSubmitExit = true;
-    if ($exitCase && ($exitCase['exit_status'] ?? '') !== 'Completed') {
-        $canSubmitExit = false;
     }
 }
 ?>
@@ -465,112 +548,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="alert alert-danger"><?php echo h($error); ?></div>
     <?php endif; ?>
 
-    <!-- Current Visa (display only) -->
+    <!-- Exit Case History (Repeating Group Demo) -->
     <div class="card mb-4">
-        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-            <span>Current Visa</span>
-            <?php if ($currentVisa && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
-                <div>
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editVisaModal">
-                        <i class="fas fa-edit"></i> Edit
-                    </button>
-                </div>
-            <?php endif; ?>
-        </div>
+        <div class="card-header fw-semibold">Exit Case History (Repeating Group)</div>
         <div class="card-body">
-            <?php if ($currentVisa): ?>
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <div class="small text-muted">Visa Type</div>
-                        <div class="fw-semibold"><?php echo h($currentVisa['visa_type']); ?></div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="small text-muted">Passport No</div>
-                        <div class="fw-semibold"><?php echo h($currentVisa['passport_no']); ?></div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="small text-muted">Status</div>
-                        <span class="badge <?php echo (($currentVisa['status'] ?? '') === 'Active') ? 'bg-success' : 'bg-secondary'; ?>">
-                            <?php echo h($currentVisa['status']); ?>
-                        </span>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="small text-muted">Issue Date</div>
-                        <div class="fw-semibold"><?php echo h($currentVisa['issue_date']); ?></div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="small text-muted">Expiry Date</div>
-                        <div class="fw-semibold"><?php echo h($currentVisa['expiry_date']); ?></div>
-                    </div>
-                </div>
+            <?php if (!$exitCases): ?>
+                <div class="text-muted">No exit cases yet.</div>
             <?php else: ?>
-                <div class="text-muted">No visa record found.</div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                        <tr>
+                            <th>Exit ID</th>
+                            <th>Exit Type</th>
+                            <th>Request Date</th>
+                            <th>Status</th>
+                            <th style="width: 140px;">View</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($exitCases as $ec): ?>
+                            <?php $isSelected = ((int)$ec['exit_id'] === (int)$selectedExitId); ?>
+                            <tr class="<?php echo $isSelected ? 'table-primary' : ''; ?>">
+                                <td><?php echo h($ec['exit_id']); ?></td>
+                                <td><?php echo h($ec['exit_type']); ?></td>
+                                <td><?php echo h($ec['request_date']); ?></td>
+                                <td><span class="badge bg-dark"><?php echo h($ec['exit_status']); ?></span></td>
+                                <td>
+                                    <a class="btn btn-sm btn-outline-primary"
+                                       href="exit.php?exit_id=<?php echo (int)$ec['exit_id']; ?>">
+                                        View
+                                    </a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="form-text">
+                    This table demonstrates the repeating group: a student can have many exit cases.
+                </div>
             <?php endif; ?>
         </div>
     </div>
-
-    <!-- Edit Visa Modal (Staff/Admin only) -->
-    <?php if ($currentVisa && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
-    <div class="modal fade" id="editVisaModal" tabindex="-1" aria-labelledby="editVisaModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="editVisaModalLabel">Edit Visa Details</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form method="post" action="update_visa.php">
-                    <div class="modal-body">
-                        <input type="hidden" name="visa_id" value="<?php echo h($currentVisa['visa_id']); ?>">
-                        <input type="hidden" name="student_id" value="<?php echo h($student_id); ?>">
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Visa Type</label>
-                            <input type="text" name="visa_type" class="form-control" value="<?php echo h($currentVisa['visa_type']); ?>" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Passport No</label>
-                            <input type="text" name="passport_no" class="form-control" value="<?php echo h($currentVisa['passport_no']); ?>" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Issue Date</label>
-                            <input type="date" name="issue_date" class="form-control" value="<?php echo h($currentVisa['issue_date']); ?>" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Expiry Date</label>
-                            <input type="date" name="expiry_date" class="form-control" value="<?php echo h($currentVisa['expiry_date']); ?>" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Status</label>
-                            <select name="status" class="form-select" required>
-                                <option value="Active" <?php echo ($currentVisa['status'] === 'Active') ? 'selected' : ''; ?>>Active</option>
-                                <option value="Expired" <?php echo ($currentVisa['status'] === 'Expired') ? 'selected' : ''; ?>>Expired</option>
-                                <option value="Cancelled" <?php echo ($currentVisa['status'] === 'Cancelled') ? 'selected' : ''; ?>>Cancelled</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save Changes</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-    <?php endif; ?>
 
     <!-- Submit Exit Request (Student) -->
     <div class="card mb-4">
         <div class="card-header fw-semibold">Submit Exit Request</div>
         <div class="card-body">
-            <?php if (!$canSubmitExit && $exitCase): ?>
+            <?php if (!$canSubmitExit && !empty($exitCases)): ?>
                 <div class="alert alert-info mb-0">
-                    You already have an exit request in progress (Exit ID: <strong><?php echo h($exitCase['exit_id']); ?></strong>,
-                    Status: <strong><?php echo h($exitCase['exit_status']); ?></strong>).
-                    You can submit a new request only when it is <strong>Completed</strong>.
+                    You already have an exit request in progress (Latest Exit ID: <strong><?php echo h($exitCases[0]['exit_id']); ?></strong>,
+                    Status: <strong><?php echo h($exitCases[0]['exit_status']); ?></strong>).
+                    You can submit a new request only when the latest case is <strong>Completed</strong>.
                 </div>
             <?php else: ?>
                 <form method="post" class="row g-3">
@@ -580,9 +610,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <label class="form-label">Exit Type</label>
                         <select name="exit_type" class="form-select" required>
                             <option value="">-- Choose exit type --</option>
-                            <option value="Completion">Completion</option>
-                            <option value="Withdrawal">Withdrawal</option>
-                            <option value="Termination">Termination</option>
+                            <?php foreach ($allowedExitTypes as $t): ?>
+                                <option value="<?php echo h($t); ?>"><?php echo h($t); ?></option>
+                            <?php endforeach; ?>
                         </select>
                     </div>
 
@@ -596,18 +626,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </div>
 
-    <!-- Exit Case Details -->
+    <!-- Selected Exit Case Details -->
     <div class="card mb-4">
-        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-            <span>Exit Case Details</span>
-            <?php if ($exitCase && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
-                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editExitCaseModal">
-                    <i class="fas fa-edit"></i> Edit
-                </button>
-            <?php endif; ?>
+        <div class="card-header fw-semibold">
+            Selected Exit Case Details
         </div>
         <div class="card-body">
-            <?php if ($exitCase): ?>
+            <?php if (!$exitCase): ?>
+                <div class="text-muted">Select an exit case from the history table above.</div>
+            <?php else: ?>
                 <div class="row g-3">
                     <div class="col-md-3">
                         <div class="small text-muted">Exit ID</div>
@@ -626,91 +653,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <span class="badge bg-dark"><?php echo h($exitCase['exit_status']); ?></span>
                     </div>
                 </div>
-                
-                <!-- Delete Exit Case (Admin only) -->
-                <?php if ($exitCase && ($_SESSION['role'] ?? '') === 'admin'): ?>
-                <div class="mt-3 pt-3 border-top">
-                    <form method="post" onsubmit="return confirm('Are you sure you want to delete this exit case? This will also delete related clearance records, unit clearances, and visa actions.');">
-                        <input type="hidden" name="action" value="delete_exit_case">
-                        <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
-                        <button type="submit" class="btn btn-sm btn-outline-danger">
-                            <i class="fas fa-trash me-1"></i> Delete Exit Case
-                        </button>
-                    </form>
-                </div>
-                <?php endif; ?>
-            <?php else: ?>
-                <div class="text-muted">No exit request found yet.</div>
             <?php endif; ?>
         </div>
     </div>
-
-    <!-- Edit Exit Case Modal -->
-    <?php if ($exitCase && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
-    <div class="modal fade" id="editExitCaseModal" tabindex="-1" aria-labelledby="editExitCaseModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="editExitCaseModalLabel">Edit Exit Case</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form method="post">
-                    <div class="modal-body">
-                        <input type="hidden" name="action" value="update_exit_case">
-                        <input type="hidden" name="exit_id" value="<?php echo h($exitCase['exit_id']); ?>">
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Exit Type</label>
-                            <select name="exit_type" class="form-select" required>
-                                <?php foreach ($allowedExitTypes as $type): ?>
-                                    <option value="<?php echo h($type); ?>" <?php echo ($exitCase['exit_type'] === $type) ? 'selected' : ''; ?>>
-                                        <?php echo h($type); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Request Date</label>
-                            <input type="date" name="request_date" class="form-control" value="<?php echo h($exitCase['request_date']); ?>" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Exit Status</label>
-                            <select name="exit_status" class="form-select" required>
-                                <option value="Pending" <?php echo ($exitCase['exit_status'] === 'Pending') ? 'selected' : ''; ?>>Pending</option>
-                                <option value="In Progress" <?php echo ($exitCase['exit_status'] === 'In Progress') ? 'selected' : ''; ?>>In Progress</option>
-                                <option value="Approved" <?php echo ($exitCase['exit_status'] === 'Approved') ? 'selected' : ''; ?>>Approved</option>
-                                <option value="Completed" <?php echo ($exitCase['exit_status'] === 'Completed') ? 'selected' : ''; ?>>Completed</option>
-                                <option value="Rejected" <?php echo ($exitCase['exit_status'] === 'Rejected') ? 'selected' : ''; ?>>Rejected</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save Changes</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-    <?php endif; ?>
 
     <!-- Clearance Record -->
     <div class="card mb-4">
-        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-            <span>Clearance Record</span>
-            <?php if ($clearance && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
-                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editClearanceModal">
-                    <i class="fas fa-edit"></i> Edit
-                </button>
-            <?php endif; ?>
-        </div>
+        <div class="card-header fw-semibold">Clearance Record (per Exit Case)</div>
         <div class="card-body">
             <?php if (!$exitCase): ?>
-                <div class="text-muted">Submit an exit request first.</div>
+                <div class="text-muted">Select an exit case first.</div>
             <?php elseif (!$clearance): ?>
-                <div class="text-muted">No clearance record created yet.</div>
+                <div class="text-muted">No clearance record created yet for this exit case.</div>
             <?php else: ?>
                 <div class="row g-3">
                     <div class="col-md-3">
@@ -726,17 +680,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <span class="badge <?php echo (($clearance['status'] ?? '') === 'Completed') ? 'bg-success' : 'bg-warning text-dark'; ?>">
                             <?php echo h($clearance['status']); ?>
                         </span>
-                    </div>
-                    <div class="col-md-3">
-                        <?php if ($clearance && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
-                            <form method="post" onsubmit="return confirm('Delete this clearance record? This will also delete all unit clearances.');" class="mt-3">
-                                <input type="hidden" name="action" value="delete_clearance_record">
-                                <input type="hidden" name="clearance_id" value="<?php echo (int)$clearance['clearance_id']; ?>">
-                                <button type="submit" class="btn btn-sm btn-outline-danger">
-                                    <i class="fas fa-trash me-1"></i> Delete
-                                </button>
-                            </form>
-                        <?php endif; ?>
                     </div>
                 </div>
             <?php endif; ?>
@@ -765,46 +708,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </div>
 
-    <!-- Edit Clearance Modal -->
-    <?php if ($clearance && in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true)): ?>
-    <div class="modal fade" id="editClearanceModal" tabindex="-1" aria-labelledby="editClearanceModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="editClearanceModalLabel">Edit Clearance Record</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form method="post">
-                    <div class="modal-body">
-                        <input type="hidden" name="action" value="update_clearance_record">
-                        <input type="hidden" name="clearance_id" value="<?php echo h($clearance['clearance_id']); ?>">
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Submission Date</label>
-                            <input type="date" name="submission_date" class="form-control" value="<?php echo h($clearance['submission_date']); ?>" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Status</label>
-                            <select name="status" class="form-select" required>
-                                <option value="In Progress" <?php echo ($clearance['status'] === 'In Progress') ? 'selected' : ''; ?>>In Progress</option>
-                                <option value="Completed" <?php echo ($clearance['status'] === 'Completed') ? 'selected' : ''; ?>>Completed</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save Changes</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-    <?php endif; ?>
-
     <!-- Unit Clearance -->
     <div class="card mb-4">
-        <div class="card-header fw-semibold">Unit Clearance</div>
+        <div class="card-header fw-semibold">Unit Clearance (Repeating Group)</div>
         <div class="card-body">
             <?php if (!$clearance): ?>
                 <div class="text-muted">No clearance record yet.</div>
@@ -847,6 +753,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             <form id="<?php echo h($formId); ?>" method="post" class="d-inline">
                                                 <input type="hidden" name="action" value="staff_update_unit_clearance">
                                                 <input type="hidden" name="unit_clearance_id" value="<?php echo (int)$u['unit_clearance_id']; ?>">
+                                                <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
                                                 <button type="submit" class="btn btn-sm btn-outline-primary" title="Save">
                                                     <i class="fas fa-save"></i>
                                                 </button>
@@ -855,6 +762,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             <form method="post" onsubmit="return confirm('Delete this unit clearance?');" class="d-inline">
                                                 <input type="hidden" name="action" value="staff_delete_unit_clearance">
                                                 <input type="hidden" name="unit_clearance_id" value="<?php echo (int)$u['unit_clearance_id']; ?>">
+                                                <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
                                                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
                                                     <i class="fas fa-trash"></i>
                                                 </button>
@@ -870,6 +778,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </tbody>
                     </table>
                 </div>
+                <div class="form-text">
+                    This table demonstrates the repeating group: multiple unit clearances under one clearance record.
+                </div>
             <?php endif; ?>
 
             <?php if (in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true) && $clearance): ?>
@@ -878,6 +789,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <form method="post" class="row g-2">
                     <input type="hidden" name="action" value="staff_upsert_unit_clearance">
                     <input type="hidden" name="clearance_id" value="<?php echo (int)$clearance['clearance_id']; ?>">
+                    <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
 
                     <div class="col-md-4">
                         <input type="text" name="unit_name" class="form-control" placeholder="Unit name (e.g. Library)" required>
@@ -899,10 +811,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <!-- Exit Visa Actions -->
     <div class="card mb-5">
-        <div class="card-header fw-semibold">Exit Visa Actions</div>
+        <div class="card-header fw-semibold">Exit Visa Actions (Repeating Group)</div>
         <div class="card-body">
             <?php if (!$exitCase): ?>
-                <div class="text-muted">Submit an exit request first.</div>
+                <div class="text-muted">Select an exit case first.</div>
             <?php elseif (!$visaActions): ?>
                 <div class="text-muted">No exit visa actions recorded yet.</div>
             <?php else: ?>
@@ -954,6 +866,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             <form id="<?php echo h($formId); ?>" method="post" class="d-inline">
                                                 <input type="hidden" name="action" value="staff_update_exit_visa_action">
                                                 <input type="hidden" name="exit_visa_id" value="<?php echo (int)$a['exit_visa_id']; ?>">
+                                                <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
                                                 <button type="submit" class="btn btn-sm btn-outline-primary" title="Save">
                                                     <i class="fas fa-save"></i>
                                                 </button>
@@ -962,6 +875,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             <form method="post" onsubmit="return confirm('Delete this exit visa action?');" class="d-inline">
                                                 <input type="hidden" name="action" value="staff_delete_exit_visa_action">
                                                 <input type="hidden" name="exit_visa_id" value="<?php echo (int)$a['exit_visa_id']; ?>">
+                                                <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
                                                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
                                                     <i class="fas fa-trash"></i>
                                                 </button>
@@ -977,6 +891,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <?php endforeach; ?>
                         </tbody>
                     </table>
+                </div>
+                <div class="form-text">
+                    This table demonstrates the repeating group: multiple exit visa actions under one exit case.
                 </div>
             <?php endif; ?>
 
@@ -1010,9 +927,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </button>
                     </div>
                 </form>
-            <?php endif; ?>
 
-            <?php if (in_array($_SESSION['role'] ?? '', ['staff', 'admin'], true) && $exitCase): ?>
                 <hr>
                 <h6 class="mb-2">Staff: Update Exit Status</h6>
                 <form method="post" class="row g-2">
@@ -1036,9 +951,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </button>
                     </div>
                 </form>
-                <div class="form-text mt-2">
-                    Note: Your trigger blocks Approved/Completed if student has pending insurance claims.
-                </div>
             <?php endif; ?>
 
         </div>
@@ -1046,7 +958,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 </div>
 
-<!-- Add Font Awesome for icons -->
+<!-- Font Awesome for icons -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
 <?php require_once __DIR__ . "/footer.php"; ?>

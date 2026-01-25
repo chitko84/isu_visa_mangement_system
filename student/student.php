@@ -254,7 +254,7 @@ if ($conn->multi_query($proc_sql)) {
 
     // Result set #2: subtype union
     if ($result = $conn->store_result()) {
-        // Could return 0-3 rows; we’ll pick the row matching student_type best later
+        // Could return 0-3 rows; we'll pick the row matching student_type best later
         $rows = [];
         while ($r = $result->fetch_assoc()) $rows[] = $r;
         $result->free();
@@ -452,7 +452,7 @@ $student_type = $core["student_type"] ?? "PC";
                     <div class="col-md-3 d-flex align-items-end">
                         <div class="form-check">
                             <?php
-                            // We didn’t include scholarship_flag in procedure union; load directly for accuracy
+                            // We didn't include scholarship_flag in procedure union; load directly for accuracy
                             $sf = 0;
                             $sf_stmt = $conn->prepare("SELECT scholarship_flag FROM undergraduate WHERE student_id=?");
                             $sf_stmt->bind_param("i", $student_id);
@@ -548,7 +548,7 @@ $student_type = $core["student_type"] ?? "PC";
             <!-- List nationalities -->
             <div class="table-responsive">
                 <table class="table table-bordered align-middle">
-                    <thead class="table-light">
+                    <thead style="background-color: #0d6efd; color: white;">
                         <tr>
                             <th style="width: 30%;">Country</th>
                             <th style="width: 20%;">Region</th>
@@ -608,10 +608,6 @@ $student_type = $core["student_type"] ?? "PC";
                         <?php endforeach; ?>
                     </tbody>
                 </table>
-            </div>
-
-            <div class="text-muted mt-2">
-                <small>Requirement satisfied: <strong>Header (Student master)</strong> + <strong>Repeating items (Nationalities)</strong>.</small>
             </div>
         </div>
     </div>

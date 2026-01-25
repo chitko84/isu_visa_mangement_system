@@ -1,8 +1,8 @@
 <?php
-// student/profile.php
+// staff/settings.php
 
-$page_title = "My Profile - ISU Student Portal";
-require_once __DIR__ . "/header.php"; // session + db ($conn) + $student_id
+$page_title = "Staff Settings - ISU";
+require_once __DIR__ . "/header.php"; // provides $conn and $staff_id
 
 // ------------------------------------------------------------
 // Helpers
@@ -16,17 +16,16 @@ function clearStoredResults(mysqli $conn): void {
     }
 }
 
-function h($v): string {
-    return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
-}
+function h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
 
 $success = "";
 $error   = "";
 
 // ------------------------------------------------------------
-// Upload folder (inside /student/uploads/profile/)
+// Upload folder (inside /staff/uploads/profile/)
+// SAME AS staff/profile.php
 // ------------------------------------------------------------
-$uploadDirRel = "uploads/profile/";            // relative to /student/
+$uploadDirRel = "uploads/profile/";            // relative to /staff/
 $uploadDirAbs = __DIR__ . "/" . $uploadDirRel; // absolute path
 
 if (!is_dir($uploadDirAbs)) {
@@ -34,7 +33,7 @@ if (!is_dir($uploadDirAbs)) {
 }
 
 // ------------------------------------------------------------
-// Handle profile photo save (base64 PNG from Cropper.js)
+// Handle profile photo save (base64 from Cropper.js)  ✅ NEW
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_cropped_profile_photo') {
     try {
@@ -43,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             throw new Exception("No cropped image received.");
         }
 
-        // Expect: data:image/png;base64,....
+        // Expect: data:image/png|jpeg|jpg|webp;base64,....
         if (!preg_match('/^data:image\/(png|jpeg|jpg|webp);base64,/', $img, $m)) {
             throw new Exception("Invalid image data.");
         }
@@ -68,138 +67,186 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
         // Remove old photo if exists
         $old = null;
-        $stmt = $conn->prepare("SELECT profile_photo FROM student WHERE student_id = ?");
-        $stmt->bind_param("i", $student_id);
+        $stmt = $conn->prepare("SELECT profile_photo FROM staff WHERE staff_id = ?");
+        $stmt->bind_param("i", $staff_id);
         $stmt->execute();
         $old = $stmt->get_result()->fetch_assoc()['profile_photo'] ?? null;
         $stmt->close();
+        clearStoredResults($conn);
 
-        if ($old) {
-            // old is stored like "uploads/profile/xxx.png"
+        if ($old && !preg_match('/^https?:\/\//i', $old)) {
             $oldAbs = __DIR__ . "/" . ltrim($old, "/");
             if (is_file($oldAbs)) @unlink($oldAbs);
         }
 
         // Save new file
-        $newName = "stu_" . (int)$student_id . "_" . date("Ymd_His") . "." . $ext;
+        $newName = "staff_" . (int)$staff_id . "_" . date("Ymd_His") . "." . $ext;
         $destAbs = $uploadDirAbs . $newName;
 
         if (file_put_contents($destAbs, $bin) === false) {
             throw new Exception("Failed to save image to disk.");
         }
 
-        // Store relative path in DB (relative to /student/)
+        // Store relative path in DB (relative to /staff/)
         $pathToStore = $uploadDirRel . $newName;
 
-        $stmt = $conn->prepare("UPDATE student SET profile_photo = ? WHERE student_id = ?");
-        $stmt->bind_param("si", $pathToStore, $student_id);
+        $stmt = $conn->prepare("UPDATE staff SET profile_photo = ? WHERE staff_id = ?");
+        $stmt->bind_param("si", $pathToStore, $staff_id);
         $stmt->execute();
         $stmt->close();
+        clearStoredResults($conn);
 
-        $success = "Profile picture updated successfully.";
+        $success = "Profile photo updated successfully.";
 
     } catch (Throwable $e) {
         $error = $e->getMessage();
+        clearStoredResults($conn);
     }
 }
 
 // ------------------------------------------------------------
-// Load profile using stored procedure: sp_get_student_profile
+// Handle other POST actions (update_profile / change_password)
 // ------------------------------------------------------------
-$profile = null;
-try {
-    $stmt = $conn->prepare("CALL sp_get_student_profile(?)");
-    $stmt->bind_param("i", $student_id);
-    $stmt->execute();
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    $action = $_POST["action"] ?? "";
 
-    $res1 = $stmt->get_result();
-    if ($res1) {
-        $profile = $res1->fetch_assoc();
-        $res1->free();
+    // 1) Update profile details
+    if ($action === "update_profile") {
+        $first_name  = trim($_POST["first_name"] ?? "");
+        $last_name   = trim($_POST["last_name"] ?? "");
+        $phone       = trim($_POST["phone"] ?? "");
+        $department  = trim($_POST["department"] ?? "");
+
+        if ($first_name === "" || $last_name === "") {
+            $error = "First name and last name are required.";
+        } else {
+            try {
+                $stmt = $conn->prepare("
+                    UPDATE staff
+                    SET first_name=?, last_name=?, phone=?, department=?
+                    WHERE staff_id=?
+                ");
+                $stmt->bind_param("ssssi", $first_name, $last_name, $phone, $department, $staff_id);
+
+                if ($stmt->execute()) {
+                    $success = $success ?: "Profile updated successfully.";
+                } else {
+                    $error = "Profile update failed: " . $stmt->error;
+                }
+                $stmt->close();
+                clearStoredResults($conn);
+            } catch (Throwable $e) {
+                $error = "Profile update error: " . $e->getMessage();
+                clearStoredResults($conn);
+            }
+        }
     }
-    $stmt->close();
-    clearStoredResults($conn);
-} catch (Throwable $e) {
-    $error = $error ?: ("Profile load error: " . $e->getMessage());
-    clearStoredResults($conn);
+
+    // 2) Change password
+    if ($action === "change_password") {
+        $current_password = (string)($_POST["current_password"] ?? "");
+        $new_password     = (string)($_POST["new_password"] ?? "");
+        $confirm_password = (string)($_POST["confirm_password"] ?? "");
+
+        if ($new_password === "" || $confirm_password === "") {
+            $error = "Please fill in the new password fields.";
+        } elseif ($new_password !== $confirm_password) {
+            $error = "New password and confirm password do not match.";
+        } elseif (strlen($new_password) < 6) {
+            $error = "New password must be at least 6 characters.";
+        } else {
+            try {
+                $stmt = $conn->prepare("SELECT password FROM staff WHERE staff_id=? LIMIT 1");
+                $stmt->bind_param("i", $staff_id);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                clearStoredResults($conn);
+
+                $hash = $row["password"] ?? null;
+
+                $ok = true;
+                if ($hash && $hash !== "") {
+                    $ok = password_verify($current_password, $hash);
+                }
+
+                if (!$ok) {
+                    $error = "Current password is incorrect.";
+                } else {
+                    $new_hash = password_hash($new_password, PASSWORD_DEFAULT);
+                    $stmt = $conn->prepare("UPDATE staff SET password=? WHERE staff_id=?");
+                    $stmt->bind_param("si", $new_hash, $staff_id);
+
+                    if ($stmt->execute()) {
+                        $success = $success ?: "Password updated successfully.";
+                    } else {
+                        $error = "Password update failed: " . $stmt->error;
+                    }
+                    $stmt->close();
+                    clearStoredResults($conn);
+                }
+            } catch (Throwable $e) {
+                $error = "Password update error: " . $e->getMessage();
+                clearStoredResults($conn);
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------
-// Nationality list (student -> nationality -> country)
+// Load current staff info
 // ------------------------------------------------------------
-$nationalities = [];
+$staff = null;
+
 try {
     $stmt = $conn->prepare("
-        SELECT n.country_id, n.acquired_date, n.is_primary, c.country_name, c.region
-        FROM nationality n
-        JOIN country c ON c.country_id = n.country_id
-        WHERE n.student_id = ?
-        ORDER BY n.is_primary DESC, c.country_name ASC
+        SELECT staff_id, first_name, last_name, email, role, department, phone, status, created_at, profile_photo
+        FROM staff
+        WHERE staff_id=?
+        LIMIT 1
     ");
-    $stmt->bind_param("i", $student_id);
+    $stmt->bind_param("i", $staff_id);
     $stmt->execute();
-    $nationalities = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    $stmt->close();
-} catch (Throwable $e) {
-    $error = $error ?: ("Nationality load error: " . $e->getMessage());
-}
+    $res = $stmt->get_result();
 
-// ------------------------------------------------------------
-// Academic dates (program_id specific OR global)
-// ------------------------------------------------------------
-$academicDates = [];
-$programId = isset($profile['program_id']) ? (int)$profile['program_id'] : 0;
-
-try {
-    if ($programId > 0) {
-        $stmt = $conn->prepare("
-            SELECT id, event_name, date, program_id, academic_year, description
-            FROM academic_dates
-            WHERE program_id = ? OR program_id IS NULL
-            ORDER BY date ASC, id ASC
-            LIMIT 200
-        ");
-        $stmt->bind_param("i", $programId);
-    } else {
-        $stmt = $conn->prepare("
-            SELECT id, event_name, date, program_id, academic_year, description
-            FROM academic_dates
-            WHERE program_id IS NULL
-            ORDER BY date ASC, id ASC
-            LIMIT 200
-        ");
+    if ($res) {
+        $staff = $res->fetch_assoc();
+        $res->free();
     }
-    $stmt->execute();
-    $academicDates = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
+    clearStoredResults($conn);
 } catch (Throwable $e) {
-    $error = $error ?: ("Academic dates load error: " . $e->getMessage());
+    $error = $error ?: ("Staff load error: " . $e->getMessage());
+    clearStoredResults($conn);
 }
 
-// ------------------------------------------------------------
-// Profile photo path
-// ------------------------------------------------------------
-$profilePhoto = null;
-try {
-    $stmt = $conn->prepare("SELECT profile_photo FROM student WHERE student_id = ?");
-    $stmt->bind_param("i", $student_id);
-    $stmt->execute();
-    $profilePhoto = $stmt->get_result()->fetch_assoc()['profile_photo'] ?? null;
-    $stmt->close();
-} catch (Throwable $e) {}
+$staff = $staff ?: [
+    'staff_id' => $staff_id,
+    'first_name' => '',
+    'last_name' => '',
+    'email' => '',
+    'role' => '',
+    'department' => '',
+    'phone' => '',
+    'status' => '',
+    'created_at' => '',
+    'profile_photo' => null
+];
 
-// Correct URL for photo (stored relative to /student/)
+// ------------------------------------------------------------
+// Profile photo path (SAME AS staff/profile.php)
+// ------------------------------------------------------------
+$profilePhoto = $staff['profile_photo'] ?? null;
+
 if ($profilePhoto) {
     if (preg_match('/^https?:\/\//i', $profilePhoto)) {
         $photoUrl = $profilePhoto;
     } else {
-        $photoUrl = $profilePhoto; // like "uploads/profile/xx.png" -> loads from student/...
+        $photoUrl = $profilePhoto; // "uploads/profile/xx.png" loads from /staff/...
     }
 } else {
-    // Default profile image inside /student/uploads/
     $photoUrl = "uploads/default_image.png";
 }
-
 ?>
 
 <!-- Cropper.js -->
@@ -208,15 +255,14 @@ if ($profilePhoto) {
 
 <style>
     .profile-photo-preview {
-        width: 170px;
-        height: 170px;
+        width: 160px;
+        height: 160px;
         border-radius: 50%;
         object-fit: cover;
         border: 2px solid #e5e7eb;
         background: #fff;
     }
 
-    /* Cropper preview MUST be a DIV */
     .crop-preview-container {
         width: 120px;
         height: 120px;
@@ -225,11 +271,6 @@ if ($profilePhoto) {
         margin: 0 auto;
         border: 2px solid #ddd;
         background-color: #f8f9fa;
-    }
-    .crop-preview-container img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
     }
 
     #editorImage {
@@ -241,10 +282,13 @@ if ($profilePhoto) {
 
 <div class="container-fluid">
 
-    <div class="d-flex align-items-center justify-content-between mb-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
-            <h2 class="mb-0">My Profile</h2>
-            <div class="text-muted">View your personal and academic information.</div>
+            <h3 class="mb-0">Staff Settings</h3>
+            <div class="text-muted">Manage your profile, password, and profile photo</div>
+        </div>
+        <div class="text-muted">
+            <span class="badge bg-secondary">Staff ID: <?php echo (int)$staff_id; ?></span>
         </div>
     </div>
 
@@ -256,18 +300,19 @@ if ($profilePhoto) {
     <?php endif; ?>
 
     <div class="row g-4">
-
-        <!-- Left -->
+        <!-- Left: Profile card -->
         <div class="col-lg-4">
-
-            <div class="card">
-                <div class="card-header fw-semibold">Profile Picture</div>
+            <div class="card shadow-sm">
+                <div class="card-header bg-white">
+                    <strong>My Profile</strong>
+                </div>
                 <div class="card-body text-center">
 
                     <img id="currentProfilePhoto"
                          src="<?php echo h($photoUrl); ?>?v=<?php echo time(); ?>"
                          alt="Profile Photo"
-                         class="profile-photo-preview mb-3">
+                         class="profile-photo-preview mb-3"
+                         onerror="this.onerror=null;this.src='<?php echo h('uploads/default_image.png'); ?>';">
 
                     <div class="text-muted small mb-3">
                         Choose a photo. Then edit (zoom + rotate + crop) and save.
@@ -288,155 +333,89 @@ if ($profilePhoto) {
 
                 </div>
             </div>
-
-            <div class="card mt-4">
-                <div class="card-header fw-semibold">Personal Details</div>
-                <div class="card-body">
-                    <div class="mb-2">
-                        <div class="small text-muted">Student ID</div>
-                        <div class="fw-semibold"><?php echo (int)$student_id; ?></div>
-                    </div>
-
-                    <div class="mb-2">
-                        <div class="small text-muted">Name</div>
-                        <div class="fw-semibold">
-                            <?php
-                            echo h(
-                                ($profile['first_name'] ?? $student['first_name'] ?? '') . " " .
-                                ($profile['last_name'] ?? $student['last_name'] ?? '')
-                            );
-                            ?>
-                        </div>
-                    </div>
-
-                    <div class="mb-2">
-                        <div class="small text-muted">Email</div>
-                        <div class="fw-semibold"><?php echo h($profile['email'] ?? $student['email'] ?? ''); ?></div>
-                    </div>
-
-                    <div class="mb-2">
-                        <div class="small text-muted">Phone</div>
-                        <div class="fw-semibold"><?php echo h($profile['phone'] ?? '-'); ?></div>
-                    </div>
-
-                    <div class="mb-2">
-                        <div class="small text-muted">Status</div>
-                        <span class="badge bg-dark"><?php echo h($profile['status'] ?? '-'); ?></span>
-                    </div>
-
-                    <div class="mb-2">
-                        <div class="small text-muted">Student Type</div>
-                        <div class="fw-semibold"><?php echo h($profile['student_type'] ?? '-'); ?></div>
-                    </div>
-                </div>
-            </div>
-
         </div>
 
-        <!-- Right -->
+        <!-- Right: Forms -->
         <div class="col-lg-8">
-
-            <div class="card">
-                <div class="card-header fw-semibold">Academic Information</div>
+            <!-- Update profile info -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-white">
+                    <strong>Profile Details</strong>
+                    <small class="text-muted ms-2">Update your contact and department</small>
+                </div>
                 <div class="card-body">
-                    <div class="row g-3">
+                    <form method="POST" class="row g-3">
+                        <input type="hidden" name="action" value="update_profile">
+
                         <div class="col-md-6">
-                            <div class="small text-muted">Program</div>
-                            <div class="fw-semibold"><?php echo h($profile['program_name'] ?? '-'); ?></div>
+                            <label class="form-label">First Name *</label>
+                            <input class="form-control" name="first_name" required value="<?php echo h($staff["first_name"] ?? ""); ?>">
                         </div>
+
                         <div class="col-md-6">
-                            <div class="small text-muted">Level</div>
-                            <div class="fw-semibold"><?php echo h($profile['level'] ?? '-'); ?></div>
+                            <label class="form-label">Last Name *</label>
+                            <input class="form-control" name="last_name" required value="<?php echo h($staff["last_name"] ?? ""); ?>">
                         </div>
+
                         <div class="col-md-6">
-                            <div class="small text-muted">Faculty</div>
-                            <div class="fw-semibold"><?php echo h($profile['faculty'] ?? '-'); ?></div>
+                            <label class="form-label">Phone</label>
+                            <input class="form-control" name="phone" value="<?php echo h($staff["phone"] ?? ""); ?>">
                         </div>
+
                         <div class="col-md-6">
-                            <div class="small text-muted">Duration (Years)</div>
-                            <div class="fw-semibold"><?php echo h($profile['duration_years'] ?? '-'); ?></div>
+                            <label class="form-label">Department</label>
+                            <input class="form-control" name="department" value="<?php echo h($staff["department"] ?? ""); ?>">
                         </div>
-                        <div class="col-md-12">
-                            <div class="small text-muted">School</div>
-                            <div class="fw-semibold"><?php echo h($profile['school_name'] ?? '-'); ?></div>
+
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-success">
+                                <i class="bi bi-save"></i> Save Changes
+                            </button>
                         </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Change password -->
+            <div class="card shadow-sm">
+                <div class="card-header bg-white">
+                    <strong>Change Password</strong>
+                </div>
+                <div class="card-body">
+                    <form method="POST" class="row g-3">
+                        <input type="hidden" name="action" value="change_password">
+
+                        <div class="col-md-4">
+                            <label class="form-label">Current Password</label>
+                            <input type="password" class="form-control" name="current_password" autocomplete="current-password">
+                            <small class="text-muted">If your password is empty, you can leave this blank.</small>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label">New Password *</label>
+                            <input type="password" class="form-control" name="new_password" required autocomplete="new-password">
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label">Confirm New Password *</label>
+                            <input type="password" class="form-control" name="confirm_password" required autocomplete="new-password">
+                        </div>
+
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-outline-primary">
+                                <i class="bi bi-shield-lock"></i> Update Password
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="text-muted mt-2">
+                        <small>Tip: Use at least 6+ characters. Use a mix of letters and numbers.</small>
                     </div>
                 </div>
             </div>
-
-            <div class="card mt-4">
-                <div class="card-header fw-semibold">Nationality</div>
-                <div class="card-body">
-                    <?php if (!$nationalities): ?>
-                        <div class="text-muted">No nationality records found.</div>
-                    <?php else: ?>
-                        <div class="table-responsive">
-                            <table class="table table-striped align-middle mb-0">
-                                <thead>
-                                <tr>
-                                    <th>Country</th>
-                                    <th>Region</th>
-                                    <th>Acquired Date</th>
-                                    <th>Primary</th>
-                                </tr>
-                                </thead>
-                                <tbody>
-                                <?php foreach ($nationalities as $n): ?>
-                                    <tr>
-                                        <td class="fw-semibold"><?php echo h($n['country_name']); ?></td>
-                                        <td><?php echo h($n['region'] ?? '-'); ?></td>
-                                        <td><?php echo h($n['acquired_date'] ?? '-'); ?></td>
-                                        <td>
-                                            <?php if ((int)$n['is_primary'] === 1): ?>
-                                                <span class="badge bg-success">Yes</span>
-                                            <?php else: ?>
-                                                <span class="badge bg-secondary">No</span>
-                                            <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
-            <div class="card mt-4">
-                <div class="card-header fw-semibold">Academic Calendar</div>
-                <div class="card-body">
-                    <?php if (!$academicDates): ?>
-                        <div class="text-muted">No academic events found.</div>
-                    <?php else: ?>
-                        <div class="table-responsive">
-                            <table class="table table-hover align-middle mb-0">
-                                <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Event</th>
-                                    <th>Academic Year</th>
-                                    <th>Description</th>
-                                </tr>
-                                </thead>
-                                <tbody>
-                                <?php foreach ($academicDates as $e): ?>
-                                    <tr>
-                                        <td class="fw-semibold"><?php echo h($e['date']); ?></td>
-                                        <td><?php echo h($e['event_name']); ?></td>
-                                        <td><?php echo h($e['academic_year']); ?></td>
-                                        <td><?php echo h($e['description'] ?? ''); ?></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
         </div>
-
     </div>
+
 </div>
 
 <!-- Modal: Image Editor -->
@@ -460,7 +439,6 @@ if ($profilePhoto) {
                     <div class="col-md-4">
                         <div class="text-center mb-3">
                             <div class="small text-muted mb-2">Preview</div>
-                            <!-- MUST be a DIV for cropper preview -->
                             <div class="crop-preview-container" id="cropPreview"></div>
                         </div>
 
@@ -527,11 +505,9 @@ openEditorBtn.addEventListener('click', function () {
     const modalEl = document.getElementById('photoEditorModal');
     const modal = new bootstrap.Modal(modalEl);
 
-    // When modal is fully visible, THEN init cropper
     modalEl.addEventListener('shown.bs.modal', function onShown() {
         modalEl.removeEventListener('shown.bs.modal', onShown);
 
-        // Wait for image to be ready
         editorImage.onload = function () {
             if (cropper) cropper.destroy();
 
@@ -546,7 +522,6 @@ openEditorBtn.addEventListener('click', function () {
             });
         };
 
-        // If image already cached/loaded
         if (editorImage.complete) {
             editorImage.onload();
         }
@@ -554,7 +529,6 @@ openEditorBtn.addEventListener('click', function () {
 
     modal.show();
 });
-
 
 // controls
 document.getElementById('zoomInBtn').addEventListener('click', () => cropper && cropper.zoom(0.1));
@@ -579,10 +553,8 @@ document.getElementById('saveCroppedBtn').addEventListener('click', function () 
         return;
     }
 
-    // ✅ Use PNG so PHP regex always matches
-    const base64 = canvas.toDataURL('image/png');
+    const base64 = canvas.toDataURL('image/png'); // match PHP regex
     croppedInput.value = base64;
-
     saveForm.submit();
 });
 
@@ -593,7 +565,6 @@ document.getElementById('photoEditorModal').addEventListener('hidden.bs.modal', 
         cropper = null;
     }
 
-    // revoke blob url
     if (editorImage.src && editorImage.src.startsWith('blob:')) {
         URL.revokeObjectURL(editorImage.src);
     }

@@ -8,7 +8,6 @@ require_once __DIR__ . "/header.php"; // includes session + db ($conn) + $studen
 // Helpers (IMPORTANT for stored procedures: avoid "commands out of sync")
 // ------------------------------------------------------------
 function clearStoredResults(mysqli $conn): void {
-    // flush all pending result sets from CALL statements
     while ($conn->more_results()) {
         $conn->next_result();
         if ($res = $conn->store_result()) {
@@ -21,8 +20,68 @@ function h($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 }
 
+/**
+ * Validate uploaded file by extension + MIME (stronger than extension-only).
+ */
+function validateUpload(array $file, int $maxBytes = 5242880): void {
+    if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
+        throw new Exception("Please choose a file to upload.");
+    }
+    if (($file['size'] ?? 0) > $maxBytes) {
+        throw new Exception("File too large. Max 5MB.");
+    }
+
+    $allowedExt = ['pdf', 'jpg', 'jpeg', 'png'];
+    $ext = strtolower(pathinfo($file['name'] ?? '', PATHINFO_EXTENSION));
+    if (!in_array($ext, $allowedExt, true)) {
+        throw new Exception("Invalid file extension. Allowed: PDF, JPG, JPEG, PNG.");
+    }
+
+    // MIME verification
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $mime = $finfo->file($file['tmp_name']);
+
+    $allowedMime = [
+        'pdf'  => ['application/pdf'],
+        'jpg'  => ['image/jpeg'],
+        'jpeg' => ['image/jpeg'],
+        'png'  => ['image/png'],
+    ];
+
+    if (!isset($allowedMime[$ext]) || !in_array($mime, $allowedMime[$ext], true)) {
+        throw new Exception("Invalid file content type (MIME). Please upload a real PDF/JPG/PNG file.");
+    }
+}
+
+function relPathToFs(string $relPath): string {
+    return realpath(__DIR__ . "/" . $relPath) ?: (__DIR__ . "/" . $relPath);
+}
+
+function ensureUploadDir(string $dir): void {
+    if (!is_dir($dir)) {
+        if (!@mkdir($dir, 0777, true) && !is_dir($dir)) {
+            throw new Exception("Failed to create upload directory.");
+        }
+    }
+}
+
 $success = "";
+$warning = "";
 $error = "";
+
+// ------------------------------------------------------------
+// Document Type Options (controlled list)
+// ------------------------------------------------------------
+$DOCUMENT_TYPES = [
+    'Passport Copy',
+    'Visa Page',
+    'Student Pass Sticker',
+    'Offer Letter',
+    'Enrollment Letter',
+    'Insurance Document',
+    'Academic Transcript',
+    'Other Supporting Document',
+];
 
 // ------------------------------------------------------------
 // Fetch current visa (latest by expiry_date)
@@ -119,41 +178,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $currentAppId = $app['application_id'] ?? null;
         }
 
-        // 2) Add document (student) - uses sp_student_add_visa_document
+        // 2) Add document (student) - warn on duplicate document_type
         if ($action === 'add_document') {
             if (!$currentAppId) {
                 throw new Exception("No active application found. Submit a renewal first.");
             }
 
             $document_type = trim($_POST['document_type'] ?? '');
-            if ($document_type === '') {
-                throw new Exception("Document type is required.");
+            if ($document_type === '' || !in_array($document_type, $DOCUMENT_TYPES, true)) {
+                throw new Exception("Invalid document type selected.");
             }
 
-            if (!isset($_FILES['document_file']) || $_FILES['document_file']['error'] !== UPLOAD_ERR_OK) {
+            // Duplicate type check (warning only, still allows)
+            $stmt = $conn->prepare("
+                SELECT COUNT(*) AS c
+                FROM visa_document
+                WHERE application_id = ?
+                  AND document_type = ?
+                LIMIT 1
+            ");
+            $stmt->bind_param("is", $currentAppId, $document_type);
+            $stmt->execute();
+            $cntRow = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if ((int)($cntRow['c'] ?? 0) > 0) {
+                $warning = "⚠️ You already uploaded a <strong>" . h($document_type) . "</strong> for this application. "
+                         . "If this is a newer version, consider using <strong>Edit</strong> on the existing one.";
+            }
+
+            if (!isset($_FILES['document_file'])) {
                 throw new Exception("Please choose a file to upload.");
             }
 
             $file = $_FILES['document_file'];
+            validateUpload($file);
 
-            // Basic validation
-            $maxBytes = 5 * 1024 * 1024; // 5MB
-            if ($file['size'] > $maxBytes) {
-                throw new Exception("File too large. Max 5MB.");
-            }
-
-            $allowedExt = ['pdf', 'jpg', 'jpeg', 'png'];
-            $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-            if (!in_array($ext, $allowedExt, true)) {
-                throw new Exception("Invalid file type. Allowed: PDF, JPG, JPEG, PNG.");
-            }
-
-            // Ensure upload folder exists
             $uploadDir = __DIR__ . "/../uploads/visa_documents/";
-            if (!is_dir($uploadDir)) {
-                @mkdir($uploadDir, 0777, true);
-            }
+            ensureUploadDir($uploadDir);
 
+            $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
             $safeName = "doc_{$student_id}_" . time() . "_" . bin2hex(random_bytes(6)) . "." . $ext;
             $fullPath = $uploadDir . $safeName;
 
@@ -161,7 +225,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Failed to upload file.");
             }
 
-            // Store relative path
             $dbPath = "../uploads/visa_documents/" . $safeName;
 
             $stmt = $conn->prepare("CALL sp_student_add_visa_document(?, ?, ?, ?, @o_doc_id)");
@@ -182,7 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $success = "Document uploaded successfully. Document ID: {$newDocId}";
         }
 
-        // 3) Update document (student)
+        // 3) Update document (student) - warn if chosen type already exists on another document in same app
         if ($action === 'update_document') {
             $document_id = (int)($_POST['document_id'] ?? 0);
             $document_type = trim($_POST['document_type'] ?? '');
@@ -190,13 +253,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($document_id <= 0) {
                 throw new Exception("Invalid document ID.");
             }
-            if ($document_type === '') {
-                throw new Exception("Document type is required.");
+            if ($document_type === '' || !in_array($document_type, $DOCUMENT_TYPES, true)) {
+                throw new Exception("Invalid document type selected.");
             }
 
-            // Get existing doc path (for ownership + to reuse if no file uploaded)
+            // Find application_id of this document (ownership check + also used for duplicate warning)
             $q = "
-                SELECT d.document_id, d.document_path
+                SELECT d.document_id, d.document_path, d.application_id
                 FROM visa_document d
                 JOIN visa_renewal_application a ON a.application_id = d.application_id
                 WHERE d.document_id = ?
@@ -213,28 +276,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Document not found or not yours.");
             }
 
-            $dbPath = $existing['document_path'];
+            $docAppId = (int)($existing['application_id'] ?? 0);
+
+            // Duplicate type check (warning only)
+            if ($docAppId > 0) {
+                $stmt = $conn->prepare("
+                    SELECT COUNT(*) AS c
+                    FROM visa_document
+                    WHERE application_id = ?
+                      AND document_type = ?
+                      AND document_id <> ?
+                    LIMIT 1
+                ");
+                $stmt->bind_param("isi", $docAppId, $document_type, $document_id);
+                $stmt->execute();
+                $cntRow = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+
+                if ((int)($cntRow['c'] ?? 0) > 0) {
+                    $warning = "⚠️ Another document with type <strong>" . h($document_type) . "</strong> already exists for this application.";
+                }
+            }
+
+            $oldDbPath = (string)$existing['document_path'];
+            $dbPath = $oldDbPath;
+            $replaced = false;
 
             // If a new file is uploaded, replace path
             if (isset($_FILES['document_file']) && $_FILES['document_file']['error'] === UPLOAD_ERR_OK) {
                 $file = $_FILES['document_file'];
-
-                $maxBytes = 5 * 1024 * 1024;
-                if ($file['size'] > $maxBytes) {
-                    throw new Exception("File too large. Max 5MB.");
-                }
-
-                $allowedExt = ['pdf', 'jpg', 'jpeg', 'png'];
-                $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-                if (!in_array($ext, $allowedExt, true)) {
-                    throw new Exception("Invalid file type. Allowed: PDF, JPG, JPEG, PNG.");
-                }
+                validateUpload($file);
 
                 $uploadDir = __DIR__ . "/../uploads/visa_documents/";
-                if (!is_dir($uploadDir)) {
-                    @mkdir($uploadDir, 0777, true);
-                }
+                ensureUploadDir($uploadDir);
 
+                $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
                 $safeName = "doc_{$student_id}_" . time() . "_" . bin2hex(random_bytes(6)) . "." . $ext;
                 $fullPath = $uploadDir . $safeName;
 
@@ -243,6 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $dbPath = "../uploads/visa_documents/" . $safeName;
+                $replaced = true;
             }
 
             $stmt = $conn->prepare("CALL sp_student_update_visa_document(?, ?, ?, ?)");
@@ -250,6 +327,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute();
             $stmt->close();
             clearStoredResults($conn);
+
+            // Delete old file AFTER DB update succeeds
+            if ($replaced && $oldDbPath !== '' && $oldDbPath !== $dbPath) {
+                $oldFs = relPathToFs($oldDbPath);
+                if (is_file($oldFs)) {
+                    @unlink($oldFs);
+                }
+            }
 
             $success = "Document updated successfully.";
         }
@@ -262,11 +347,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Invalid document ID.");
             }
 
+            // Get existing path for ownership + to delete file from disk
+            $q = "
+                SELECT d.document_path
+                FROM visa_document d
+                JOIN visa_renewal_application a ON a.application_id = d.application_id
+                WHERE d.document_id = ?
+                  AND a.student_id = ?
+                LIMIT 1
+            ";
+            $stmt = $conn->prepare($q);
+            $stmt->bind_param("ii", $document_id, $student_id);
+            $stmt->execute();
+            $existing = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if (!$existing) {
+                throw new Exception("Document not found or not yours.");
+            }
+
+            $oldDbPath = (string)$existing['document_path'];
+
             $stmt = $conn->prepare("CALL sp_student_delete_visa_document(?, ?)");
             $stmt->bind_param("ii", $student_id, $document_id);
             $stmt->execute();
             $stmt->close();
             clearStoredResults($conn);
+
+            // Delete file from disk (best effort)
+            if ($oldDbPath !== '') {
+                $oldFs = relPathToFs($oldDbPath);
+                if (is_file($oldFs)) {
+                    @unlink($oldFs);
+                }
+            }
 
             $success = "Document deleted successfully.";
         }
@@ -401,6 +515,11 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
     <?php if ($success): ?>
         <div class="alert alert-success"><?php echo h($success); ?></div>
     <?php endif; ?>
+
+    <?php if ($warning): ?>
+        <div class="alert alert-warning"><?php echo $warning; ?></div>
+    <?php endif; ?>
+
     <?php if ($error): ?>
         <div class="alert alert-danger"><?php echo h($error); ?></div>
     <?php endif; ?>
@@ -607,7 +726,14 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
 
                         <div class="col-md-5">
                             <label class="form-label">Document Type</label>
-                            <input type="text" name="document_type" class="form-control" required placeholder="e.g., Passport Copy">
+                            <select name="document_type" class="form-select" required>
+                                <option value="">-- Select Document Type --</option>
+                                <?php foreach ($DOCUMENT_TYPES as $type): ?>
+                                    <option value="<?php echo h($type); ?>">
+                                        <?php echo h($type); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
 
                         <div class="col-md-5">
@@ -640,13 +766,13 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                             </tr>
                             </thead>
                             <tbody>
-                            <?php foreach ($documents as $d): ?>
+                            <?php foreach ($documents as $d): $docId = (int)$d['document_id']; ?>
                                 <tr>
                                     <td><?php echo h($d['document_id']); ?></td>
                                     <td class="fw-semibold"><?php echo h($d['document_type']); ?></td>
                                     <td>
                                         <?php if (!empty($d['document_path'])): ?>
-                                            <a href="<?php echo h($d['document_path']); ?>" target="_blank">View</a>
+                                            <a href="<?php echo h($d['document_path']); ?>" target="_blank" rel="noopener">View</a>
                                         <?php else: ?>
                                             <span class="text-muted">-</span>
                                         <?php endif; ?>
@@ -656,30 +782,35 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                                         <!-- Update -->
                                         <button class="btn btn-sm btn-outline-primary" type="button"
                                                 data-bs-toggle="collapse"
-                                                data-bs-target="#editDoc<?php echo (int)$d['document_id']; ?>">
+                                                data-bs-target="#editDoc<?php echo $docId; ?>">
                                             Edit
                                         </button>
 
-                                        <!-- Delete -->
-                                        <form method="post" class="d-inline" onsubmit="return confirm('Delete this document?');">
-                                            <input type="hidden" name="action" value="delete_document">
-                                            <input type="hidden" name="document_id" value="<?php echo (int)$d['document_id']; ?>">
-                                            <button class="btn btn-sm btn-outline-danger" type="submit">
-                                                Delete
-                                            </button>
-                                        </form>
+                                        <!-- Delete (Modal trigger) -->
+                                        <button class="btn btn-sm btn-outline-danger" type="button"
+                                                data-bs-toggle="modal"
+                                                data-bs-target="#deleteModal<?php echo $docId; ?>">
+                                            Delete
+                                        </button>
 
                                         <!-- Edit Collapse -->
-                                        <div class="collapse mt-2" id="editDoc<?php echo (int)$d['document_id']; ?>">
+                                        <div class="collapse mt-2" id="editDoc<?php echo $docId; ?>">
                                             <div class="border rounded p-2">
                                                 <form method="post" enctype="multipart/form-data" class="row g-2">
                                                     <input type="hidden" name="action" value="update_document">
-                                                    <input type="hidden" name="document_id" value="<?php echo (int)$d['document_id']; ?>">
+                                                    <input type="hidden" name="document_id" value="<?php echo $docId; ?>">
 
                                                     <div class="col-12">
                                                         <label class="form-label small mb-1">Document Type</label>
-                                                        <input type="text" name="document_type" class="form-control"
-                                                               value="<?php echo h($d['document_type']); ?>" required>
+                                                        <select name="document_type" class="form-select" required>
+                                                            <option value="">-- Select Document Type --</option>
+                                                            <?php foreach ($DOCUMENT_TYPES as $type): ?>
+                                                                <option value="<?php echo h($type); ?>"
+                                                                    <?php echo (($d['document_type'] ?? '') === $type) ? 'selected' : ''; ?>>
+                                                                    <?php echo h($type); ?>
+                                                                </option>
+                                                            <?php endforeach; ?>
+                                                        </select>
                                                     </div>
 
                                                     <div class="col-12">
@@ -694,6 +825,34 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                                                         </button>
                                                     </div>
                                                 </form>
+                                            </div>
+                                        </div>
+
+                                        <!-- Delete Modal -->
+                                        <div class="modal fade" id="deleteModal<?php echo $docId; ?>" tabindex="-1"
+                                             aria-labelledby="deleteModalLabel<?php echo $docId; ?>" aria-hidden="true">
+                                            <div class="modal-dialog modal-dialog-centered">
+                                                <div class="modal-content">
+                                                    <div class="modal-header">
+                                                        <h5 class="modal-title" id="deleteModalLabel<?php echo $docId; ?>">Confirm Deletion</h5>
+                                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                    </div>
+                                                    <div class="modal-body">
+                                                        Are you sure you want to delete this document?
+                                                        <div class="small text-muted mt-1">
+                                                            Document ID: <strong><?php echo h($d['document_id']); ?></strong><br>
+                                                            Type: <strong><?php echo h($d['document_type']); ?></strong>
+                                                        </div>
+                                                    </div>
+                                                    <div class="modal-footer">
+                                                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                        <form method="post" class="m-0">
+                                                            <input type="hidden" name="action" value="delete_document">
+                                                            <input type="hidden" name="document_id" value="<?php echo $docId; ?>">
+                                                            <button type="submit" class="btn btn-danger">Yes, Delete</button>
+                                                        </form>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
 

@@ -1,8 +1,8 @@
 <?php
-// student/profile.php
+// staff/profile.php
 
-$page_title = "My Profile - ISU Student Portal";
-require_once __DIR__ . "/header.php"; // session + db ($conn) + $student_id
+$page_title = "My Profile - ISU Staff Portal";
+require_once __DIR__ . "/header.php"; // provides $conn and $staff_id
 
 // ------------------------------------------------------------
 // Helpers
@@ -24,9 +24,9 @@ $success = "";
 $error   = "";
 
 // ------------------------------------------------------------
-// Upload folder (inside /student/uploads/profile/)
+// Upload folder (inside /staff/uploads/profile/)
 // ------------------------------------------------------------
-$uploadDirRel = "uploads/profile/";            // relative to /student/
+$uploadDirRel = "uploads/profile/";            // relative to /staff/
 $uploadDirAbs = __DIR__ . "/" . $uploadDirRel; // absolute path
 
 if (!is_dir($uploadDirAbs)) {
@@ -68,31 +68,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
         // Remove old photo if exists
         $old = null;
-        $stmt = $conn->prepare("SELECT profile_photo FROM student WHERE student_id = ?");
-        $stmt->bind_param("i", $student_id);
+        $stmt = $conn->prepare("SELECT profile_photo FROM staff WHERE staff_id = ?");
+        $stmt->bind_param("i", $staff_id);
         $stmt->execute();
         $old = $stmt->get_result()->fetch_assoc()['profile_photo'] ?? null;
         $stmt->close();
 
         if ($old) {
-            // old is stored like "uploads/profile/xxx.png"
             $oldAbs = __DIR__ . "/" . ltrim($old, "/");
             if (is_file($oldAbs)) @unlink($oldAbs);
         }
 
         // Save new file
-        $newName = "stu_" . (int)$student_id . "_" . date("Ymd_His") . "." . $ext;
+        $newName = "staff_" . (int)$staff_id . "_" . date("Ymd_His") . "." . $ext;
         $destAbs = $uploadDirAbs . $newName;
 
         if (file_put_contents($destAbs, $bin) === false) {
             throw new Exception("Failed to save image to disk.");
         }
 
-        // Store relative path in DB (relative to /student/)
+        // Store relative path in DB (relative to /staff/)
         $pathToStore = $uploadDirRel . $newName;
 
-        $stmt = $conn->prepare("UPDATE student SET profile_photo = ? WHERE student_id = ?");
-        $stmt->bind_param("si", $pathToStore, $student_id);
+        $stmt = $conn->prepare("UPDATE staff SET profile_photo = ? WHERE staff_id = ?");
+        $stmt->bind_param("si", $pathToStore, $staff_id);
         $stmt->execute();
         $stmt->close();
 
@@ -104,18 +103,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 }
 
 // ------------------------------------------------------------
-// Load profile using stored procedure: sp_get_student_profile
+// Load staff profile
 // ------------------------------------------------------------
 $profile = null;
 try {
-    $stmt = $conn->prepare("CALL sp_get_student_profile(?)");
-    $stmt->bind_param("i", $student_id);
+    $stmt = $conn->prepare("
+        SELECT staff_id, first_name, last_name, email, phone, role, department, status, profile_photo
+        FROM staff
+        WHERE staff_id = ?
+        LIMIT 1
+    ");
+    $stmt->bind_param("i", $staff_id);
     $stmt->execute();
 
-    $res1 = $stmt->get_result();
-    if ($res1) {
-        $profile = $res1->fetch_assoc();
-        $res1->free();
+    $res = $stmt->get_result();
+    if ($res) {
+        $profile = $res->fetch_assoc();
+        $res->free();
     }
     $stmt->close();
     clearStoredResults($conn);
@@ -124,82 +128,33 @@ try {
     clearStoredResults($conn);
 }
 
-// ------------------------------------------------------------
-// Nationality list (student -> nationality -> country)
-// ------------------------------------------------------------
-$nationalities = [];
-try {
-    $stmt = $conn->prepare("
-        SELECT n.country_id, n.acquired_date, n.is_primary, c.country_name, c.region
-        FROM nationality n
-        JOIN country c ON c.country_id = n.country_id
-        WHERE n.student_id = ?
-        ORDER BY n.is_primary DESC, c.country_name ASC
-    ");
-    $stmt->bind_param("i", $student_id);
-    $stmt->execute();
-    $nationalities = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    $stmt->close();
-} catch (Throwable $e) {
-    $error = $error ?: ("Nationality load error: " . $e->getMessage());
-}
-
-// ------------------------------------------------------------
-// Academic dates (program_id specific OR global)
-// ------------------------------------------------------------
-$academicDates = [];
-$programId = isset($profile['program_id']) ? (int)$profile['program_id'] : 0;
-
-try {
-    if ($programId > 0) {
-        $stmt = $conn->prepare("
-            SELECT id, event_name, date, program_id, academic_year, description
-            FROM academic_dates
-            WHERE program_id = ? OR program_id IS NULL
-            ORDER BY date ASC, id ASC
-            LIMIT 200
-        ");
-        $stmt->bind_param("i", $programId);
-    } else {
-        $stmt = $conn->prepare("
-            SELECT id, event_name, date, program_id, academic_year, description
-            FROM academic_dates
-            WHERE program_id IS NULL
-            ORDER BY date ASC, id ASC
-            LIMIT 200
-        ");
-    }
-    $stmt->execute();
-    $academicDates = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    $stmt->close();
-} catch (Throwable $e) {
-    $error = $error ?: ("Academic dates load error: " . $e->getMessage());
-}
+// If somehow still null, avoid warnings
+$profile = $profile ?: [
+    'staff_id' => $staff_id,
+    'first_name' => '',
+    'last_name' => '',
+    'email' => '',
+    'phone' => '',
+    'role' => '',
+    'department' => '',
+    'status' => '',
+    'profile_photo' => null
+];
 
 // ------------------------------------------------------------
 // Profile photo path
 // ------------------------------------------------------------
-$profilePhoto = null;
-try {
-    $stmt = $conn->prepare("SELECT profile_photo FROM student WHERE student_id = ?");
-    $stmt->bind_param("i", $student_id);
-    $stmt->execute();
-    $profilePhoto = $stmt->get_result()->fetch_assoc()['profile_photo'] ?? null;
-    $stmt->close();
-} catch (Throwable $e) {}
+$profilePhoto = $profile['profile_photo'] ?? null;
 
-// Correct URL for photo (stored relative to /student/)
 if ($profilePhoto) {
     if (preg_match('/^https?:\/\//i', $profilePhoto)) {
         $photoUrl = $profilePhoto;
     } else {
-        $photoUrl = $profilePhoto; // like "uploads/profile/xx.png" -> loads from student/...
+        $photoUrl = $profilePhoto; // like "uploads/profile/xx.png" -> loads from staff/...
     }
 } else {
-    // Default profile image inside /student/uploads/
     $photoUrl = "uploads/default_image.png";
 }
-
 ?>
 
 <!-- Cropper.js -->
@@ -226,11 +181,6 @@ if ($profilePhoto) {
         border: 2px solid #ddd;
         background-color: #f8f9fa;
     }
-    .crop-preview-container img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
 
     #editorImage {
         max-width: 100%;
@@ -244,7 +194,7 @@ if ($profilePhoto) {
     <div class="d-flex align-items-center justify-content-between mb-3">
         <div>
             <h2 class="mb-0">My Profile</h2>
-            <div class="text-muted">View your personal and academic information.</div>
+            <div class="text-muted">View your staff information.</div>
         </div>
     </div>
 
@@ -290,28 +240,23 @@ if ($profilePhoto) {
             </div>
 
             <div class="card mt-4">
-                <div class="card-header fw-semibold">Personal Details</div>
+                <div class="card-header fw-semibold">Staff Details</div>
                 <div class="card-body">
                     <div class="mb-2">
-                        <div class="small text-muted">Student ID</div>
-                        <div class="fw-semibold"><?php echo (int)$student_id; ?></div>
+                        <div class="small text-muted">Staff ID</div>
+                        <div class="fw-semibold"><?php echo (int)$profile['staff_id']; ?></div>
                     </div>
 
                     <div class="mb-2">
                         <div class="small text-muted">Name</div>
                         <div class="fw-semibold">
-                            <?php
-                            echo h(
-                                ($profile['first_name'] ?? $student['first_name'] ?? '') . " " .
-                                ($profile['last_name'] ?? $student['last_name'] ?? '')
-                            );
-                            ?>
+                            <?php echo h(($profile['first_name'] ?? '') . " " . ($profile['last_name'] ?? '')); ?>
                         </div>
                     </div>
 
                     <div class="mb-2">
                         <div class="small text-muted">Email</div>
-                        <div class="fw-semibold"><?php echo h($profile['email'] ?? $student['email'] ?? ''); ?></div>
+                        <div class="fw-semibold"><?php echo h($profile['email'] ?? '-'); ?></div>
                     </div>
 
                     <div class="mb-2">
@@ -325,8 +270,13 @@ if ($profilePhoto) {
                     </div>
 
                     <div class="mb-2">
-                        <div class="small text-muted">Student Type</div>
-                        <div class="fw-semibold"><?php echo h($profile['student_type'] ?? '-'); ?></div>
+                        <div class="small text-muted">Role</div>
+                        <div class="fw-semibold"><?php echo h($profile['role'] ?? '-'); ?></div>
+                    </div>
+
+                    <div class="mb-2">
+                        <div class="small text-muted">Department</div>
+                        <div class="fw-semibold"><?php echo h($profile['department'] ?? '-'); ?></div>
                     </div>
                 </div>
             </div>
@@ -335,105 +285,21 @@ if ($profilePhoto) {
 
         <!-- Right -->
         <div class="col-lg-8">
-
             <div class="card">
-                <div class="card-header fw-semibold">Academic Information</div>
+                <div class="card-header fw-semibold">Work Information</div>
                 <div class="card-body">
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <div class="small text-muted">Program</div>
-                            <div class="fw-semibold"><?php echo h($profile['program_name'] ?? '-'); ?></div>
+                            <div class="small text-muted">Role</div>
+                            <div class="fw-semibold"><?php echo h($profile['role'] ?? '-'); ?></div>
                         </div>
                         <div class="col-md-6">
-                            <div class="small text-muted">Level</div>
-                            <div class="fw-semibold"><?php echo h($profile['level'] ?? '-'); ?></div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="small text-muted">Faculty</div>
-                            <div class="fw-semibold"><?php echo h($profile['faculty'] ?? '-'); ?></div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="small text-muted">Duration (Years)</div>
-                            <div class="fw-semibold"><?php echo h($profile['duration_years'] ?? '-'); ?></div>
-                        </div>
-                        <div class="col-md-12">
-                            <div class="small text-muted">School</div>
-                            <div class="fw-semibold"><?php echo h($profile['school_name'] ?? '-'); ?></div>
+                            <div class="small text-muted">Department</div>
+                            <div class="fw-semibold"><?php echo h($profile['department'] ?? '-'); ?></div>
                         </div>
                     </div>
                 </div>
             </div>
-
-            <div class="card mt-4">
-                <div class="card-header fw-semibold">Nationality</div>
-                <div class="card-body">
-                    <?php if (!$nationalities): ?>
-                        <div class="text-muted">No nationality records found.</div>
-                    <?php else: ?>
-                        <div class="table-responsive">
-                            <table class="table table-striped align-middle mb-0">
-                                <thead>
-                                <tr>
-                                    <th>Country</th>
-                                    <th>Region</th>
-                                    <th>Acquired Date</th>
-                                    <th>Primary</th>
-                                </tr>
-                                </thead>
-                                <tbody>
-                                <?php foreach ($nationalities as $n): ?>
-                                    <tr>
-                                        <td class="fw-semibold"><?php echo h($n['country_name']); ?></td>
-                                        <td><?php echo h($n['region'] ?? '-'); ?></td>
-                                        <td><?php echo h($n['acquired_date'] ?? '-'); ?></td>
-                                        <td>
-                                            <?php if ((int)$n['is_primary'] === 1): ?>
-                                                <span class="badge bg-success">Yes</span>
-                                            <?php else: ?>
-                                                <span class="badge bg-secondary">No</span>
-                                            <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
-            <div class="card mt-4">
-                <div class="card-header fw-semibold">Academic Calendar</div>
-                <div class="card-body">
-                    <?php if (!$academicDates): ?>
-                        <div class="text-muted">No academic events found.</div>
-                    <?php else: ?>
-                        <div class="table-responsive">
-                            <table class="table table-hover align-middle mb-0">
-                                <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Event</th>
-                                    <th>Academic Year</th>
-                                    <th>Description</th>
-                                </tr>
-                                </thead>
-                                <tbody>
-                                <?php foreach ($academicDates as $e): ?>
-                                    <tr>
-                                        <td class="fw-semibold"><?php echo h($e['date']); ?></td>
-                                        <td><?php echo h($e['event_name']); ?></td>
-                                        <td><?php echo h($e['academic_year']); ?></td>
-                                        <td><?php echo h($e['description'] ?? ''); ?></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
         </div>
 
     </div>
@@ -460,7 +326,6 @@ if ($profilePhoto) {
                     <div class="col-md-4">
                         <div class="text-center mb-3">
                             <div class="small text-muted mb-2">Preview</div>
-                            <!-- MUST be a DIV for cropper preview -->
                             <div class="crop-preview-container" id="cropPreview"></div>
                         </div>
 
@@ -527,11 +392,9 @@ openEditorBtn.addEventListener('click', function () {
     const modalEl = document.getElementById('photoEditorModal');
     const modal = new bootstrap.Modal(modalEl);
 
-    // When modal is fully visible, THEN init cropper
     modalEl.addEventListener('shown.bs.modal', function onShown() {
         modalEl.removeEventListener('shown.bs.modal', onShown);
 
-        // Wait for image to be ready
         editorImage.onload = function () {
             if (cropper) cropper.destroy();
 
@@ -546,7 +409,6 @@ openEditorBtn.addEventListener('click', function () {
             });
         };
 
-        // If image already cached/loaded
         if (editorImage.complete) {
             editorImage.onload();
         }
@@ -554,7 +416,6 @@ openEditorBtn.addEventListener('click', function () {
 
     modal.show();
 });
-
 
 // controls
 document.getElementById('zoomInBtn').addEventListener('click', () => cropper && cropper.zoom(0.1));
@@ -579,10 +440,9 @@ document.getElementById('saveCroppedBtn').addEventListener('click', function () 
         return;
     }
 
-    // ✅ Use PNG so PHP regex always matches
+    // Use PNG so PHP regex always matches
     const base64 = canvas.toDataURL('image/png');
     croppedInput.value = base64;
-
     saveForm.submit();
 });
 
@@ -593,7 +453,6 @@ document.getElementById('photoEditorModal').addEventListener('hidden.bs.modal', 
         cropper = null;
     }
 
-    // revoke blob url
     if (editorImage.src && editorImage.src.startsWith('blob:')) {
         URL.revokeObjectURL(editorImage.src);
     }

@@ -1,13 +1,10 @@
 <?php
-// Start session
 session_start();
-
-// Include database connection
 require_once 'includes/db.php';
 
-// Check if already logged in
+// If already logged in
 if (isset($_SESSION['user_id'])) {
-    if ($_SESSION['role'] == 'student') {
+    if (($_SESSION['role'] ?? '') === 'student') {
         header("Location: student/dashboard.php");
     } else {
         header("Location: staff/dashboard.php");
@@ -15,169 +12,171 @@ if (isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Initialize variables
 $error = '';
 $success = '';
 
-// Get programs for dropdown
-$programs_query = "SELECT program_id, program_name FROM program ORDER BY program_name";
-$programs_result = $conn->query($programs_query);
+// Dropdown queries
+$programs_result  = $conn->query("SELECT program_id, program_name FROM program ORDER BY program_name");
+$schools_result   = $conn->query("SELECT school_id, school_name FROM school ORDER BY school_name");
+$countries_result = $conn->query("SELECT country_id, country_name FROM country ORDER BY country_name");
 
-// Get schools for dropdown
-$schools_query = "SELECT school_id, school_name FROM school ORDER BY school_name";
-$schools_result = $conn->query($schools_query);
-
-// Get countries for dropdown
-$countries_query = "SELECT country_id, country_name FROM country ORDER BY country_name";
-$countries_result = $conn->query($countries_query);
-
-// Handle form submission
+// Handle submit
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    
-    // Get form data
-    $first_name = trim($_POST['first_name']);
-    $last_name = trim($_POST['last_name']);
-    $email = trim($_POST['email']);
-    $phone = trim($_POST['phone']);
-    $password = $_POST['password'];
-    $confirm_password = $_POST['confirm_password'];
-    $student_id = intval($_POST['student_id']);
-    $program_id = intval($_POST['program_id']);
-    $school_id = intval($_POST['school_id']);
-    $nationality_id = intval($_POST['nationality_id']);
-    $gender = $_POST['gender'];
-    $date_of_birth = $_POST['date_of_birth'];
-    $passport_no = $_POST['passport_no'] ?? '';
-    $emergency_contact = $_POST['emergency_contact'] ?? '';
-    $address = $_POST['address'] ?? '';
-    $student_type = $_POST['student_type'] ?? 'UG';
-    
-    // Validate required fields
-    if (empty($first_name) || empty($last_name) || empty($email) || empty($phone) || 
-        empty($password) || empty($confirm_password) || empty($student_id) || 
-        empty($program_id) || empty($school_id) || empty($nationality_id) || 
-        empty($gender) || empty($date_of_birth)) {
+
+    $first_name = trim($_POST['first_name'] ?? '');
+    $last_name  = trim($_POST['last_name'] ?? '');
+    $email      = trim($_POST['email'] ?? '');
+    $phone      = trim($_POST['phone'] ?? '');
+    $password   = (string)($_POST['password'] ?? '');
+    $confirm_password = (string)($_POST['confirm_password'] ?? '');
+
+    $student_id     = (int)($_POST['student_id'] ?? 0);
+    $program_id     = (int)($_POST['program_id'] ?? 0);
+    $school_id      = (int)($_POST['school_id'] ?? 0);
+    $nationality_id = (int)($_POST['nationality_id'] ?? 0);
+
+    $gender        = trim($_POST['gender'] ?? '');
+    $date_of_birth = trim($_POST['date_of_birth'] ?? '');
+
+    $passport_no       = trim($_POST['passport_no'] ?? '');
+    $emergency_contact = trim($_POST['emergency_contact'] ?? '');
+    $address           = trim($_POST['address'] ?? '');
+    $student_type      = trim($_POST['student_type'] ?? 'UG');
+
+    // ---- Validation ----
+    if (
+        $first_name === '' || $last_name === '' || $email === '' || $phone === '' ||
+        $password === '' || $confirm_password === '' || $student_id === 0 ||
+        $program_id === 0 || $school_id === 0 || $nationality_id === 0 ||
+        $gender === '' || $date_of_birth === ''
+    ) {
         $error = "All required fields must be filled!";
-    }
-    // Validate email format
-    elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $error = "Please enter a valid email address.";
     }
-    // Validate password strength
-    elseif (strlen($password) < 6) {
+    // REQUIRED email pattern: name@student.aiu.edu.my
+    elseif (!preg_match('/^[a-z0-9._%+\-]+@student\.aiu\.edu\.my$/i', $email)) {
+        $error = "Please use your official AIU student email (name@student.aiu.edu.my).";
+    } elseif (strlen($password) < 6) {
         $error = "Password must be at least 6 characters long.";
-    }
-    // Check password match
-    elseif ($password !== $confirm_password) {
+    } elseif ($password !== $confirm_password) {
         $error = "Passwords do not match!";
     }
-    // Check if email already exists
-    elseif ($conn->query("SELECT student_id FROM student WHERE email = '$email'")->num_rows > 0) {
-        $error = "Email already registered! Please use a different email.";
+
+    // Email exists check (SAFE prepared)
+    if ($error === '') {
+        $stmt = $conn->prepare("SELECT student_id FROM student WHERE email = ? LIMIT 1");
+        $stmt->bind_param("s", $email);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($res && $res->num_rows > 0) {
+            $error = "Email already registered! Please use a different email.";
+        }
+        $stmt->close();
     }
-    // Check if student ID already exists
-    elseif ($conn->query("SELECT student_id FROM student WHERE student_id = $student_id")->num_rows > 0) {
-        $error = "Student ID already exists! Please contact administrator.";
+
+    // Student ID exists check (SAFE prepared)
+    if ($error === '') {
+        $stmt = $conn->prepare("SELECT student_id FROM student WHERE student_id = ? LIMIT 1");
+        $stmt->bind_param("i", $student_id);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($res && $res->num_rows > 0) {
+            $error = "Student ID already exists! Please contact administrator.";
+        }
+        $stmt->close();
     }
-    
-    // If no errors, proceed with registration
-    if (!$error) {
-        // Start transaction
+
+    // ---- Insert ----
+    if ($error === '') {
         $conn->begin_transaction();
-        
+
         try {
-            // For demo - use simple password (in production, use password_hash)
-            $hashed_password = $password; // Simple for demo
-            
-            // Insert into student table
-            $student_query = "INSERT INTO student (student_id, program_id, first_name, last_name, phone, email, status, student_type) 
-                             VALUES (?, ?, ?, ?, ?, ?, 'Active', ?)";
-            
-            $stmt = $conn->prepare($student_query);
+            // IMPORTANT: this code does NOT store password in DB (your schema doesn't include it here).
+            // If you have a `user`/`accounts` table, tell me and I’ll wire it properly with password_hash().
+
+            // Insert student
+            $student_sql = "
+                INSERT INTO student (student_id, program_id, first_name, last_name, phone, email, status, student_type)
+                VALUES (?, ?, ?, ?, ?, ?, 'Active', ?)
+            ";
+            $stmt = $conn->prepare($student_sql);
             $stmt->bind_param("iisssss", $student_id, $program_id, $first_name, $last_name, $phone, $email, $student_type);
-            
             if (!$stmt->execute()) {
                 throw new Exception("Failed to create student record: " . $stmt->error);
             }
             $stmt->close();
-            
-            // Insert into nationality table
-            $nationality_query = "INSERT INTO nationality (student_id, country_id, acquired_date, is_primary) 
-                                 VALUES (?, ?, CURDATE(), 1)";
-            
-            $stmt = $conn->prepare($nationality_query);
+
+            // Insert nationality
+            $nat_sql = "
+                INSERT INTO nationality (student_id, country_id, acquired_date, is_primary)
+                VALUES (?, ?, CURDATE(), 1)
+            ";
+            $stmt = $conn->prepare($nat_sql);
             $stmt->bind_param("ii", $student_id, $nationality_id);
-            
             if (!$stmt->execute()) {
                 throw new Exception("Failed to add nationality: " . $stmt->error);
             }
             $stmt->close();
-            
-            // Insert visa record
-            if (!empty($passport_no)) {
-                $visa_query = "INSERT INTO student_visa (visa_id, student_id, visa_type, issue_date, expiry_date, status, passport_no) 
-                              VALUES (?, ?, 'Student Pass', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 YEAR), 'Active', ?)";
-                
-                // Generate visa ID
+
+            // Optional visa record (only if passport_no provided)
+            if ($passport_no !== '') {
                 $visa_id = $student_id * 1000 + 1;
-                
-                $stmt = $conn->prepare($visa_query);
+
+                $visa_sql = "
+                    INSERT INTO student_visa (visa_id, student_id, visa_type, issue_date, expiry_date, status, passport_no)
+                    VALUES (?, ?, 'Student Pass', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 YEAR), 'Active', ?)
+                ";
+                $stmt = $conn->prepare($visa_sql);
                 $stmt->bind_param("iis", $visa_id, $student_id, $passport_no);
-                
                 if (!$stmt->execute()) {
                     throw new Exception("Failed to create visa record: " . $stmt->error);
                 }
                 $stmt->close();
             }
-            
-            // Insert into student subtype table based on student_type
-            switch ($student_type) {
-                case 'PC': // Pre-College
-                    $subtype_query = "INSERT INTO pre_college (student_id, guardian_name, guardian_contact, placement_test_score) 
-                                     VALUES (?, ?, ?, NULL)";
-                    $stmt = $conn->prepare($subtype_query);
-                    $stmt->bind_param("iss", $student_id, $emergency_contact, $emergency_contact);
-                    break;
-                    
-                case 'UG': // Undergraduate
-                    $subtype_query = "INSERT INTO undergraduate (student_id, high_school_name, admission_score, scholarship_flag) 
-                                     VALUES (?, ?, NULL, 0)";
-                    $stmt = $conn->prepare($subtype_query);
-                    $stmt->bind_param("is", $student_id, $emergency_contact);
-                    break;
-                    
-                case 'PG': // Post Graduate
-                    $subtype_query = "INSERT INTO post_graduate (student_id, previous_degree, supervisor_name, thesis_required) 
-                                     VALUES (?, ?, NULL, 0)";
-                    $stmt = $conn->prepare($subtype_query);
-                    $stmt->bind_param("is", $student_id, $emergency_contact);
-                    break;
+
+            // Insert subtype
+            if ($student_type === 'PC') {
+                $sub_sql = "
+                    INSERT INTO pre_college (student_id, guardian_name, guardian_contact, placement_test_score)
+                    VALUES (?, ?, ?, NULL)
+                ";
+                $stmt = $conn->prepare($sub_sql);
+                $stmt->bind_param("iss", $student_id, $emergency_contact, $emergency_contact);
+            } elseif ($student_type === 'UG') {
+                $sub_sql = "
+                    INSERT INTO undergraduate (student_id, high_school_name, admission_score, scholarship_flag)
+                    VALUES (?, ?, NULL, 0)
+                ";
+                $stmt = $conn->prepare($sub_sql);
+                $stmt->bind_param("is", $student_id, $emergency_contact);
+            } else { // PG
+                $sub_sql = "
+                    INSERT INTO post_graduate (student_id, previous_degree, supervisor_name, thesis_required)
+                    VALUES (?, ?, NULL, 0)
+                ";
+                $stmt = $conn->prepare($sub_sql);
+                $stmt->bind_param("is", $student_id, $emergency_contact);
             }
-            
-            if (isset($stmt)) {
-                if (!$stmt->execute()) {
-                    throw new Exception("Failed to add student subtype: " . $stmt->error);
-                }
-                $stmt->close();
+
+            if (!$stmt->execute()) {
+                throw new Exception("Failed to add student subtype: " . $stmt->error);
             }
-            
-            // Commit transaction
+            $stmt->close();
+
             $conn->commit();
-            
-            // Set success message
             $success = "Registration successful! Your Student ID: $student_id. You can now login.";
-            
-            // Clear form data
-            $_POST = array();
-            
+            $_POST = [];
+
         } catch (Exception $e) {
-            // Rollback transaction on error
             $conn->rollback();
             $error = "Registration failed: " . $e->getMessage();
         }
     }
 }
 ?>
+
+
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="light">
 <head>
@@ -691,6 +690,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             margin-top: 0.5rem;
             margin-bottom: 0;
         }
+        /* Password Strength Meter */
+        #passwordStrengthBar {
+            transition: width 0.25s ease;
+            border-radius: 10px;
+        }
+
     </style>
 </head>
 
@@ -990,6 +995,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     </span>
                                 </div>
                                 <small class="text-muted" data-i18n="password_hint">Minimum 6 characters</small>
+                                <!-- Password Strength Meter -->
+                                <div class="mt-2">
+                                    <div class="progress" style="height: 8px; border-radius: 10px;">
+                                        <div id="passwordStrengthBar" class="progress-bar" role="progressbar" style="width: 0%;"></div>
+                                    </div>
+                                    <small id="passwordStrengthText" class="text-muted d-block mt-1">Strength: -</small>
+                                </div>
+
                             </div>
                             
                             <div class="col-md-6">
@@ -1073,669 +1086,721 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // ---------- i18n translations ----------
-        const translations = {
-            en: {
-                page_title: "Register - ISSU Visa Management System",
-                brand_title: "ISSU Student Registration",
-                welcome_subtitle: "International Student Services Unit - New Student Registration",
-                step1_label: "Personal Info",
-                step2_label: "Academic Info",
-                step3_label: "Account Setup",
-                personal_info_title: "Personal Information",
-                academic_info_title: "Academic Information",
-                account_security_title: "Account Security",
-                label_student_id: "Student ID",
-                label_email: "Email Address",
-                label_first_name: "First Name",
-                label_last_name: "Last Name",
-                label_phone: "Phone Number",
-                label_dob: "Date of Birth",
-                label_gender: "Gender",
-                label_nationality: "Nationality",
-                label_passport: "Passport Number",
-                label_emergency: "Emergency Contact",
-                label_school: "School",
-                label_program: "Program",
-                label_student_type: "Student Type",
-                label_address: "Address",
-                label_password: "Password",
-                label_confirm_password: "Confirm Password",
-                label_terms: "Terms and Conditions",
-                email_hint: "Use your official AIU email",
-                password_hint: "Minimum 6 characters",
-                select_gender: "Select Gender",
-                gender_male: "Male",
-                gender_female: "Female",
-                select_country: "Select Country",
-                select_school: "Select School",
-                select_program: "Select Program",
-                select_type: "Select Type",
-                type_pc: "Pre-College",
-                type_ug: "Undergraduate",
-                type_pg: "Post-Graduate",
-                ph_emergency: "Emergency phone number",
-                ph_address: "Current address",
-                ph_password: "Create a strong password",
-                ph_confirm_password: "Confirm your password",
-                terms_label: "I agree to the Terms and Conditions",
-                terms_intro: "By registering, you agree to:",
-                terms_point1: "Provide accurate and complete information",
-                terms_point2: "Maintain the confidentiality of your account credentials",
-                terms_point3: "Comply with AIU's policies and regulations",
-                terms_point4: "Keep your visa and passport information updated",
-                terms_point5: "Notify the International Student Services Unit of any changes to your status",
-                terms_conclusion: "You also consent to the collection and processing of your personal data for academic and administrative purposes.",
-                btn_next: "Next",
-                btn_previous: "Previous",
-                btn_register: "Complete Registration",
-                btn_submit: "Submit Registration",
-                have_account: "Already have an account?",
-                login_here: "Login here",
-                go_to_login: "Go to Login",
-                uni_name: "Albukhary International University | International Student Services Unit"
-            },
-            ms: {
-                page_title: "Daftar - Sistem Pengurusan Visa ISSU",
-                brand_title: "Pendaftaran Pelajar ISSU",
-                welcome_subtitle: "Unit Perkhidmatan Pelajar Antarabangsa - Pendaftaran Pelajar Baru",
-                step1_label: "Maklumat Peribadi",
-                step2_label: "Maklumat Akademik",
-                step3_label: "Penyediaan Akaun",
-                personal_info_title: "Maklumat Peribadi",
-                academic_info_title: "Maklumat Akademik",
-                account_security_title: "Keselamatan Akaun",
-                label_student_id: "ID Pelajar",
-                label_email: "Alamat E-mel",
-                label_first_name: "Nama Pertama",
-                label_last_name: "Nama Akhir",
-                label_phone: "Nombor Telefon",
-                label_dob: "Tarikh Lahir",
-                label_gender: "Jantina",
-                label_nationality: "Kewarganegaraan",
-                label_passport: "Nombor Pasport",
-                label_emergency: "Hubungan Kecemasan",
-                label_school: "Sekolah",
-                label_program: "Program",
-                label_student_type: "Jenis Pelajar",
-                label_address: "Alamat",
-                label_password: "Kata Laluan",
-                label_confirm_password: "Sahkan Kata Laluan",
-                label_terms: "Terma dan Syarat",
-                email_hint: "Gunakan e-mel rasmi AIU anda",
-                password_hint: "Minimum 6 aksara",
-                select_gender: "Pilih Jantina",
-                gender_male: "Lelaki",
-                gender_female: "Perempuan",
-                select_country: "Pilih Negara",
-                select_school: "Pilih Sekolah",
-                select_program: "Pilih Program",
-                select_type: "Pilih Jenis",
-                type_pc: "Pra-Kolej",
-                type_ug: "Ijazah Sarjana Muda",
-                type_pg: "Pascasiswazah",
-                ph_emergency: "Nombor telefon kecemasan",
-                ph_address: "Alamat semasa",
-                ph_password: "Cipta kata laluan yang kuat",
-                ph_confirm_password: "Sahkan kata laluan anda",
-                terms_label: "Saya bersetuju dengan Terma dan Syarat",
-                terms_intro: "Dengan mendaftar, anda bersetuju untuk:",
-                terms_point1: "Memberikan maklumat yang tepat dan lengkap",
-                terms_point2: "Menjaga kerahsiaan kelayakan akaun anda",
-                terms_point3: "Mematuhi polisi dan peraturan AIU",
-                terms_point4: "Mengemas kini maklumat visa dan pasport anda",
-                terms_point5: "Memberitahu Unit Perkhidmatan Pelajar Antarabangsa tentang sebarang perubahan status anda",
-                terms_conclusion: "Anda juga bersetuju dengan pengumpulan dan pemprosesan data peribadi anda untuk tujuan akademik dan pentadbiran.",
-                btn_next: "Seterusnya",
-                btn_previous: "Sebelumnya",
-                btn_register: "Selesai Pendaftaran",
-                btn_submit: "Hantar Pendaftaran",
-                have_account: "Sudah mempunyai akaun?",
-                login_here: "Log masuk di sini",
-                go_to_login: "Pergi ke Log Masuk",
-                uni_name: "Universiti Antarabangsa Albukhary | Unit Perkhidmatan Pelajar Antarabangsa"
-            },
-            id: {
-                page_title: "Daftar - Sistem Manajemen Visa ISSU",
-                brand_title: "Pendaftaran Mahasiswa ISSU",
-                welcome_subtitle: "Unit Layanan Mahasiswa Internasional - Pendaftaran Mahasiswa Baru",
-                step1_label: "Info Pribadi",
-                step2_label: "Info Akademik",
-                step3_label: "Pengaturan Akun",
-                personal_info_title: "Informasi Pribadi",
-                academic_info_title: "Informasi Akademik",
-                account_security_title: "Keamanan Akun",
-                label_student_id: "ID Mahasiswa",
-                label_email: "Alamat Email",
-                label_first_name: "Nama Depan",
-                label_last_name: "Nama Belakang",
-                label_phone: "Nomor Telepon",
-                label_dob: "Tanggal Lahir",
-                label_gender: "Jenis Kelamin",
-                label_nationality: "Kewarganegaraan",
-                label_passport: "Nomor Paspor",
-                label_emergency: "Kontak Darurat",
-                label_school: "Sekolah",
-                label_program: "Program",
-                label_student_type: "Jenis Mahasiswa",
-                label_address: "Alamat",
-                label_password: "Kata Sandi",
-                label_confirm_password: "Konfirmasi Kata Sandi",
-                label_terms: "Syarat dan Ketentuan",
-                email_hint: "Gunakan email resmi AIU Anda",
-                password_hint: "Minimal 6 karakter",
-                select_gender: "Pilih Jenis Kelamin",
-                gender_male: "Laki-laki",
-                gender_female: "Perempuan",
-                select_country: "Pilih Negara",
-                select_school: "Pilih Sekolah",
-                select_program: "Pilih Program",
-                select_type: "Pilih Jenis",
-                type_pc: "Pra-Kuliah",
-                type_ug: "Sarjana",
-                type_pg: "Pascasarjana",
-                ph_emergency: "Nomor telepon darurat",
-                ph_address: "Alamat saat ini",
-                ph_password: "Buat kata sandi yang kuat",
-                ph_confirm_password: "Konfirmasi kata sandi Anda",
-                terms_label: "Saya setuju dengan Syarat dan Ketentuan",
-                terms_intro: "Dengan mendaftar, Anda setuju untuk:",
-                terms_point1: "Memberikan informasi yang akurat dan lengkap",
-                terms_point2: "Menjaga kerahasiaan kredensial akun Anda",
-                terms_point3: "Mematuhi kebijakan dan peraturan AIU",
-                terms_point4: "Memperbarui informasi visa dan paspor Anda",
-                terms_point5: "Memberitahu Unit Layanan Mahasiswa Internasional tentang perubahan status Anda",
-                terms_conclusion: "Anda juga menyetujui pengumpulan dan pemrosesan data pribadi Anda untuk tujuan akademik dan administratif.",
-                btn_next: "Selanjutnya",
-                btn_previous: "Sebelumnya",
-                btn_register: "Selesaikan Pendaftaran",
-                btn_submit: "Kirim Pendaftaran",
-                have_account: "Sudah punya akun?",
-                login_here: "Masuk di sini",
-                go_to_login: "Pergi ke Masuk",
-                uni_name: "Universitas Internasional Albukhary | Unit Layanan Mahasiswa Internasional"
-            },
-            my: {
-                page_title: "မှတ်ပုံတင်ရန် - ISSU ဗီဇာစီမံခန့်ခွဲမှုစနစ်",
-                brand_title: "ISSU ကျောင်းသားမှတ်ပုံတင်ခြင်း",
-                welcome_subtitle: "နိုင်ငံတကာကျောင်းသားဝန်ဆောင်မှုဌာန - ကျောင်းသားအသစ်မှတ်ပုံတင်ခြင်း",
-                step1_label: "ကိုယ်ရေးအချက်အလက်",
-                step2_label: "ပညာရေးအချက်အလက်",
-                step3_label: "အကောင့်တည်ဆောက်ခြင်း",
-                personal_info_title: "ကိုယ်ရေးအချက်အလက်",
-                academic_info_title: "ပညာရေးအချက်အလက်",
-                account_security_title: "အကောင့်လုံခြုံရေး",
-                label_student_id: "ကျောင်းသားနံပါတ်",
-                label_email: "အီးမေးလ်လိပ်စာ",
-                label_first_name: "အမည်ရှေ့",
-                label_last_name: "အမည်နောက်",
-                label_phone: "ဖုန်းနံပါတ်",
-                label_dob: "မွေးသက္ကရာဇ်",
-                label_gender: "လိင်",
-                label_nationality: "နိုင်ငံသား",
-                label_passport: "နိုင်ငံကူးလက်မှတ်နံပါတ်",
-                label_emergency: "အရေးပေါ်ဆက်သွယ်ရန်",
-                label_school: "ကျောင်း",
-                label_program: "ပရိုဂရမ်",
-                label_student_type: "ကျောင်းသားအမျိုးအစား",
-                label_address: "လိပ်စာ",
-                label_password: "စကားဝှက်",
-                label_confirm_password: "စကားဝှက်အတည်ပြုရန်",
-                label_terms: "စည်းကမ်းချက်များနှင့်သတ်မှတ်ချက်များ",
-                email_hint: "သင်၏တရားဝင် AIU အီးမေးလ်ကိုအသုံးပြုပါ",
-                password_hint: "အနည်းဆုံး စာလုံး ၆ လုံး",
-                select_gender: "လိင် ရွေးချယ်ပါ",
-                gender_male: "ကျား",
-                gender_female: "မ",
-                select_country: "နိုင်ငံ ရွေးချယ်ပါ",
-                select_school: "ကျောင်း ရွေးချယ်ပါ",
-                select_program: "ပရိုဂရမ် ရွေးချယ်ပါ",
-                select_type: "အမျိုးအစား ရွေးချယ်ပါ",
-                type_pc: "ကောလိပ်မတက်မီ",
-                type_ug: "ဘွဲ့လွန်",
-                type_pg: "ဘွဲ့လွန်ကျောင်းသား",
-                ph_emergency: "အရေးပေါ်ဖုန်းနံပါတ်",
-                ph_address: "လက်ရှိလိပ်စာ",
-                ph_password: "ခိုင်မာသောစကားဝှက်ဖန်တီးပါ",
-                ph_confirm_password: "သင်၏စကားဝှက်ကိုအတည်ပြုပါ",
-                terms_label: "ကျွန်ုပ်သည် စည်းကမ်းချက်များနှင့် သတ်မှတ်ချက်များကို သဘောတူပါသည်",
-                terms_intro: "မှတ်ပုံတင်ခြင်းဖြင့် သင်သည် အောက်ပါတို့ကို သဘောတူပါသည်-",
-                terms_point1: "တိကျမှန်ကန်ပြီး ပြည့်စုံသော အချက်အလက်များကို ပေးပါ",
-                terms_point2: "သင်၏အကောင့်အထောက်အထားများ၏ လျှို့ဝှက်မှုကို ထိန်းသိမ်းပါ",
-                terms_point3: "AIU ၏မူဝါဒများနှင့် စည်းမျဉ်းများကို လိုက်နာပါ",
-                terms_point4: "သင်၏ဗီဇာနှင့် နိုင်ငံကူးလက်မှတ်အချက်အလက်များကို မွမ်းမံပါ",
-                terms_point5: "သင်၏အခြေအနေပြောင်းလဲမှုများကို နိုင်ငံတကာကျောင်းသားဝန်ဆောင်မှုဌာနသို့ အသိပေးပါ",
-                terms_conclusion: "သင်၏ကိုယ်ရေးကိုယ်တာအချက်အလက်များကို ပညာရေးနှင့် အုပ်ချုပ်ရေးဆိုင်ရာ ရည်ရွယ်ချက်များအတွက် စုဆောင်းခြင်းနှင့် ကိုင်တွယ်ခြင်းကိုလည်း သဘောတူပါသည်။",
-                btn_next: "နောက်တစ်ခု",
-                btn_previous: "ရှေ့တစ်ခု",
-                btn_register: "မှတ်ပုံတင်ခြင်းပြီးစီးရန်",
-                btn_submit: "မှတ်ပုံတင်ခြင်းတင်ပြရန်",
-                have_account: "အကောင့်ရှိပြီးသားလား?",
-                login_here: "ဤနေရာတွင် ဝင်ရောက်ပါ",
-                go_to_login: "ဝင်ရောက်ရန်သွားရန်",
-                uni_name: "Albukhary အပြည်ပြည်ဆိုင်ရာတက္ကသိုလ် | နိုင်ငံတကာကျောင်းသားဝန်ဆောင်မှုဌာန"
-            },
-            ar: {
-                page_title: "تسجيل - نظام إدارة تأشيرات ISSU",
-                brand_title: "تسجيل طالب ISSU",
-                welcome_subtitle: "وحدة خدمات الطلاب الدوليين - تسجيل طالب جديد",
-                step1_label: "المعلومات الشخصية",
-                step2_label: "المعلومات الأكاديمية",
-                step3_label: "إعداد الحساب",
-                personal_info_title: "المعلومات الشخصية",
-                academic_info_title: "المعلومات الأكاديمية",
-                account_security_title: "أمان الحساب",
-                label_student_id: "رقم الطالب",
-                label_email: "عنوان البريد الإلكتروني",
-                label_first_name: "الاسم الأول",
-                label_last_name: "اسم العائلة",
-                label_phone: "رقم الهاتف",
-                label_dob: "تاريخ الميلاد",
-                label_gender: "الجنس",
-                label_nationality: "الجنسية",
-                label_passport: "رقم جواز السفر",
-                label_emergency: "جهة اتصال الطوارئ",
-                label_school: "المدرسة",
-                label_program: "البرنامج",
-                label_student_type: "نوع الطالب",
-                label_address: "العنوان",
-                label_password: "كلمة المرور",
-                label_confirm_password: "تأكيد كلمة المرور",
-                label_terms: "الشروط والأحكام",
-                email_hint: "استخدم بريد AIU الرسمي الخاص بك",
-                password_hint: "6 أحرف على الأقل",
-                select_gender: "اختر الجنس",
-                gender_male: "ذكر",
-                gender_female: "أنثى",
-                select_country: "اختر الدولة",
-                select_school: "اختر المدرسة",
-                select_program: "اختر البرنامج",
-                select_type: "اختر النوع",
-                type_pc: "ما قبل الكلية",
-                type_ug: "المرحلة الجامعية",
-                type_pg: "الدراسات العليا",
-                ph_emergency: "رقم هاتف الطوارئ",
-                ph_address: "العنوان الحالي",
-                ph_password: "أنشئ كلمة مرور قوية",
-                ph_confirm_password: "قم بتأكيد كلمة المرور الخاصة بك",
-                terms_label: "أوافق على الشروط والأحكام",
-                terms_intro: "بالتسجيل، فإنك توافق على:",
-                terms_point1: "تقديم معلومات دقيقة وكاملة",
-                terms_point2: "الحفاظ على سرية بيانات اعتماد حسابك",
-                terms_point3: "الامتثال لسياسات وأنظمة AIU",
-                terms_point4: "تحديث معلومات التأشيرة وجواز السفر الخاصة بك",
-                terms_point5: "إخطار وحدة خدمات الطلاب الدوليين بأي تغييرات في حالتك",
-                terms_conclusion: "أنت توافق أيضًا على جمع ومعالجة بياناتك الشخصية للأغراض الأكاديمية والإدارية.",
-                btn_next: "التالي",
-                btn_previous: "السابق",
-                btn_register: "إكمال التسجيل",
-                btn_submit: "إرسال التسجيل",
-                have_account: "هل لديك حساب بالفعل؟",
-                login_here: "تسجيل الدخول هنا",
-                go_to_login: "اذهب لتسجيل الدخول",
-                uni_name: "جامعة البخاري الدولية | وحدة خدمات الطلاب الدوليين"
-            },
-            si: {
-                page_title: "ලියාපදිංචි වන්න - ISSU වීසා කළමනාකරණ පද්ධතිය",
-                brand_title: "ISSU ශිෂ්‍ය ලියාපදිංචි කිරීම",
-                welcome_subtitle: "ජාත්‍යන්තර ශිෂ්‍ය සේවා ඒකකය - නව ශිෂ්‍ය ලියාපදිංචි කිරීම",
-                step1_label: "පෞද්ගලික තොරතුරු",
-                step2_label: "ශාස්ත්‍රීය තොරතුරු",
-                step3_label: "ගිණුම් සැකසුම",
-                personal_info_title: "පෞද්ගලික තොරතුරු",
-                academic_info_title: "ශාස්ත්‍රීය තොරතුරු",
-                account_security_title: "ගිණුම් ආරක්ෂාව",
-                label_student_id: "ශිෂ්‍ය අංකය",
-                label_email: "විද්‍යුත් තැපැල් ලිපිනය",
-                label_first_name: "මුල් නම",
-                label_last_name: "අවසාන නම",
-                label_phone: "දුරකථන අංකය",
-                label_dob: "උපන් දිනය",
-                label_gender: "ලිංගය",
-                label_nationality: "ජාතිකත්වය",
-                label_passport: "පාස්පෝර්ට් අංකය",
-                label_emergency: "හදිසි සම්බන්ධතාව",
-                label_school: "විද්‍යාලය",
-                label_program: "වැඩසටහන",
-                label_student_type: "ශිෂ්‍ය වර්ගය",
-                label_address: "ලිපිනය",
-                label_password: "මුරපදය",
-                label_confirm_password: "මුරපදය තහවුරු කරන්න",
-                label_terms: "නියමයන් සහ කොන්දේසි",
-                email_hint: "ඔබගේ නිල AIU විද්‍යුත් තැපෑල භාවිතා කරන්න",
-                password_hint: "අවම අක්ෂර 6 ක්",
-                select_gender: "ලිංගය තෝරන්න",
-                gender_male: "පිරිමි",
-                gender_female: "ගැහැණු",
-                select_country: "රට තෝරන්න",
-                select_school: "විද්‍යාලය තෝරන්න",
-                select_program: "වැඩසටහන තෝරන්න",
-                select_type: "වර්ගය තෝරන්න",
-                type_pc: "පූර්ව විද්‍යාල",
-                type_ug: "උපාධි පෙර සූදානම්",
-                type_pg: "පශ්චාත් උපාධි",
-                ph_emergency: "හදිසි දුරකථන අංකය",
-                ph_address: "වර්තමාන ලිපිනය",
-                ph_password: "ශක්තිමත් මුරපදයක් සාදන්න",
-                ph_confirm_password: "ඔබගේ මුරපදය තහවුරු කරන්න",
-                terms_label: "මම නියමයන් සහ කොන්දේසි වලට එකඟ වෙමි",
-                terms_intro: "ලියාපදිංචි වීමෙන්, ඔබ පහත සඳහන් දේ සඳහා එකඟ වේ:",
-                terms_point1: "නිවැරදි සහ සම්පූර්ණ තොරතුරු සපයන්න",
-                terms_point2: "ඔබේ ගිණුම් අක්තපත්‍රවල රහස්‍යතාව රැකගන්න",
-                terms_point3: "AIU හි ප්‍රතිපත්ති සහ රෙගුලාසි වලට අනුගත වන්න",
-                terms_point4: "ඔබේ වීසා සහ පාස්පෝර්ට් තොරතුරු යාවත්කාලීන කරගන්න",
-                terms_point5: "ඔබේ තත්ත්වයේ ඕනෑම වෙනසක් ජාත්‍යන්තර ශිෂ්‍ය සේවා ඒකකයට දන්වන්න",
-                terms_conclusion: "ශාස්ත්‍රීය සහ පරිපාලන අරමුණු සඳහා ඔබේ පෞද්ගලික දත්ත එකතු කිරීම සහ සැකසීමට ද ඔබ එකඟ වේ.",
-                btn_next: "ඊළඟ",
-                btn_previous: "කලින්",
-                btn_register: "ලියාපදිංචි කිරීම සම්පූර්ණ කරන්න",
-                btn_submit: "ලියාපදිංචි කිරීම ඉදිරිපත් කරන්න",
-                have_account: "දැනටමත් ගිණුමක් තිබේද?",
-                login_here: "මෙහි පිවිසෙන්න",
-                go_to_login: "පිවිසීමට යන්න",
-                uni_name: "Albukhary ජාත්‍යන්තර විශ්වවිද්‍යාලය | ජාත්‍යන්තර ශිෂ්‍ය සේවා ඒකකය"
-            }
-        };
-
-        function applyLanguage(lang) {
-            const dict = translations[lang] || translations.en;
-
-            // Update page title
-            document.title = dict.page_title || translations.en.page_title;
-
-            // Update text content
-            document.querySelectorAll("[data-i18n]").forEach(el => {
-                const key = el.getAttribute("data-i18n");
-                if (dict[key]) {
-                    // For RTL languages, add special handling if needed
-                    if (lang === "ar" || lang === "my") {
-                        el.style.textAlign = 'right';
-                        el.style.direction = (lang === "ar") ? 'rtl' : 'ltr';
-                    }
-                    el.textContent = dict[key];
-                }
-            });
-
-            // Update placeholders
-            document.querySelectorAll("[data-i18n-ph]").forEach(el => {
-                const key = el.getAttribute("data-i18n-ph");
-                if (dict[key]) el.setAttribute("placeholder", dict[key]);
-            });
-
-            // Update option values for dropdowns
-            document.querySelectorAll("option[data-i18n]").forEach(option => {
-                const key = option.getAttribute("data-i18n");
-                if (dict[key]) option.textContent = dict[key];
-            });
-
-            // RTL for Arabic
-            if (lang === "ar") {
-                document.documentElement.setAttribute("dir", "rtl");
-                document.documentElement.lang = "ar";
-                document.querySelectorAll('.form-control, .input-group-text, select, textarea, .form-label, .section-title, .step-label, .logo-text, .logo-subtitle').forEach(el => {
-                    el.style.textAlign = 'right';
-                    el.style.direction = 'rtl';
-                });
-                // Adjust padding for RTL
-                document.querySelectorAll('.input-group').forEach(group => {
-                    const text = group.querySelector('.input-group-text');
-                    if (text && text.parentElement === group) {
-                        text.style.borderRadius = '0 12px 12px 0';
-                        const input = group.querySelector('.form-control');
-                        if (input) {
-                            input.style.borderRadius = '12px 0 0 12px';
-                        }
-                    }
-                });
-            } else {
-                document.documentElement.setAttribute("dir", "ltr");
-                document.documentElement.lang = lang;
-                document.querySelectorAll('.form-control, .input-group-text, select, textarea, .form-label, .section-title, .step-label, .logo-text, .logo-subtitle').forEach(el => {
-                    el.style.textAlign = 'left';
-                    el.style.direction = 'ltr';
-                });
-                // Reset padding for LTR
-                document.querySelectorAll('.input-group').forEach(group => {
-                    const text = group.querySelector('.input-group-text');
-                    if (text && text.parentElement === group) {
-                        text.style.borderRadius = '12px 0 0 12px';
-                        const input = group.querySelector('.form-control');
-                        if (input) {
-                            input.style.borderRadius = '0 12px 12px 0';
-                        }
-                    }
-                });
-            }
-
-            // For Myanmar (Burmese)
-            if (lang === "my") {
-                document.querySelectorAll('.form-control, .input-group-text, select, textarea, .form-label, .section-title, .step-label, .logo-text, .logo-subtitle').forEach(el => {
-                    el.style.fontFamily = "'Padauk', 'Myanmar3', 'Poppins', sans-serif";
-                });
-            } else {
-                document.querySelectorAll('.form-control, .input-group-text, select, textarea, .form-label, .section-title, .step-label, .logo-text, .logo-subtitle').forEach(el => {
-                    el.style.fontFamily = "'Poppins', sans-serif";
-                });
-            }
-
-            localStorage.setItem("issu_lang", lang);
+    // ---------- i18n translations ----------
+    const translations = {
+        en: {
+            page_title: "Register - ISSU Visa Management System",
+            brand_title: "ISSU Student Registration",
+            welcome_subtitle: "International Student Services Unit - New Student Registration",
+            step1_label: "Personal Info",
+            step2_label: "Academic Info",
+            step3_label: "Account Setup",
+            personal_info_title: "Personal Information",
+            academic_info_title: "Academic Information",
+            account_security_title: "Account Security",
+            label_student_id: "Student ID",
+            label_email: "Email Address",
+            label_first_name: "First Name",
+            label_last_name: "Last Name",
+            label_phone: "Phone Number",
+            label_dob: "Date of Birth",
+            label_gender: "Gender",
+            label_nationality: "Nationality",
+            label_passport: "Passport Number",
+            label_emergency: "Emergency Contact",
+            label_school: "School",
+            label_program: "Program",
+            label_student_type: "Student Type",
+            label_address: "Address",
+            label_password: "Password",
+            label_confirm_password: "Confirm Password",
+            label_terms: "Terms and Conditions",
+            email_hint: "Use your official AIU email",
+            password_hint: "Minimum 6 characters",
+            select_gender: "Select Gender",
+            gender_male: "Male",
+            gender_female: "Female",
+            select_country: "Select Country",
+            select_school: "Select School",
+            select_program: "Select Program",
+            select_type: "Select Type",
+            type_pc: "Pre-College",
+            type_ug: "Undergraduate",
+            type_pg: "Post-Graduate",
+            ph_emergency: "Emergency phone number",
+            ph_address: "Current address",
+            ph_password: "Create a strong password",
+            ph_confirm_password: "Confirm your password",
+            terms_label: "I agree to the Terms and Conditions",
+            terms_intro: "By registering, you agree to:",
+            terms_point1: "Provide accurate and complete information",
+            terms_point2: "Maintain the confidentiality of your account credentials",
+            terms_point3: "Comply with AIU's policies and regulations",
+            terms_point4: "Keep your visa and passport information updated",
+            terms_point5: "Notify the International Student Services Unit of any changes to your status",
+            terms_conclusion: "You also consent to the collection and processing of your personal data for academic and administrative purposes.",
+            btn_next: "Next",
+            btn_previous: "Previous",
+            btn_register: "Complete Registration",
+            btn_submit: "Submit Registration",
+            have_account: "Already have an account?",
+            login_here: "Login here",
+            go_to_login: "Go to Login",
+            uni_name: "Albukhary International University | International Student Services Unit"
+        },
+        ms: {
+            page_title: "Daftar - Sistem Pengurusan Visa ISSU",
+            brand_title: "Pendaftaran Pelajar ISSU",
+            welcome_subtitle: "Unit Perkhidmatan Pelajar Antarabangsa - Pendaftaran Pelajar Baru",
+            step1_label: "Maklumat Peribadi",
+            step2_label: "Maklumat Akademik",
+            step3_label: "Penyediaan Akaun",
+            personal_info_title: "Maklumat Peribadi",
+            academic_info_title: "Maklumat Akademik",
+            account_security_title: "Keselamatan Akaun",
+            label_student_id: "ID Pelajar",
+            label_email: "Alamat E-mel",
+            label_first_name: "Nama Pertama",
+            label_last_name: "Nama Akhir",
+            label_phone: "Nombor Telefon",
+            label_dob: "Tarikh Lahir",
+            label_gender: "Jantina",
+            label_nationality: "Kewarganegaraan",
+            label_passport: "Nombor Pasport",
+            label_emergency: "Hubungan Kecemasan",
+            label_school: "Sekolah",
+            label_program: "Program",
+            label_student_type: "Jenis Pelajar",
+            label_address: "Alamat",
+            label_password: "Kata Laluan",
+            label_confirm_password: "Sahkan Kata Laluan",
+            label_terms: "Terma dan Syarat",
+            email_hint: "Gunakan e-mel rasmi AIU anda",
+            password_hint: "Minimum 6 aksara",
+            select_gender: "Pilih Jantina",
+            gender_male: "Lelaki",
+            gender_female: "Perempuan",
+            select_country: "Pilih Negara",
+            select_school: "Pilih Sekolah",
+            select_program: "Pilih Program",
+            select_type: "Pilih Jenis",
+            type_pc: "Pra-Kolej",
+            type_ug: "Ijazah Sarjana Muda",
+            type_pg: "Pascasiswazah",
+            ph_emergency: "Nombor telefon kecemasan",
+            ph_address: "Alamat semasa",
+            ph_password: "Cipta kata laluan yang kuat",
+            ph_confirm_password: "Sahkan kata laluan anda",
+            terms_label: "Saya bersetuju dengan Terma dan Syarat",
+            terms_intro: "Dengan mendaftar, anda bersetuju untuk:",
+            terms_point1: "Memberikan maklumat yang tepat dan lengkap",
+            terms_point2: "Menjaga kerahsiaan kelayakan akaun anda",
+            terms_point3: "Mematuhi polisi dan peraturan AIU",
+            terms_point4: "Mengemas kini maklumat visa dan pasport anda",
+            terms_point5: "Memberitahu Unit Perkhidmatan Pelajar Antarabangsa tentang sebarang perubahan status anda",
+            terms_conclusion: "Anda juga bersetuju dengan pengumpulan dan pemprosesan data peribadi anda untuk tujuan akademik dan pentadbiran.",
+            btn_next: "Seterusnya",
+            btn_previous: "Sebelumnya",
+            btn_register: "Selesai Pendaftaran",
+            btn_submit: "Hantar Pendaftaran",
+            have_account: "Sudah mempunyai akaun?",
+            login_here: "Log masuk di sini",
+            go_to_login: "Pergi ke Log Masuk",
+            uni_name: "Universiti Antarabangsa Albukhary | Unit Perkhidmatan Pelajar Antarabangsa"
+        },
+        id: {
+            page_title: "Daftar - Sistem Manajemen Visa ISSU",
+            brand_title: "Pendaftaran Mahasiswa ISSU",
+            welcome_subtitle: "Unit Layanan Mahasiswa Internasional - Pendaftaran Mahasiswa Baru",
+            step1_label: "Info Pribadi",
+            step2_label: "Info Akademik",
+            step3_label: "Pengaturan Akun",
+            personal_info_title: "Informasi Pribadi",
+            academic_info_title: "Informasi Akademik",
+            account_security_title: "Keamanan Akun",
+            label_student_id: "ID Mahasiswa",
+            label_email: "Alamat Email",
+            label_first_name: "Nama Depan",
+            label_last_name: "Nama Belakang",
+            label_phone: "Nomor Telepon",
+            label_dob: "Tanggal Lahir",
+            label_gender: "Jenis Kelamin",
+            label_nationality: "Kewarganegaraan",
+            label_passport: "Nomor Paspor",
+            label_emergency: "Kontak Darurat",
+            label_school: "Sekolah",
+            label_program: "Program",
+            label_student_type: "Jenis Mahasiswa",
+            label_address: "Alamat",
+            label_password: "Kata Sandi",
+            label_confirm_password: "Konfirmasi Kata Sandi",
+            label_terms: "Syarat dan Ketentuan",
+            email_hint: "Gunakan email resmi AIU Anda",
+            password_hint: "Minimal 6 karakter",
+            select_gender: "Pilih Jenis Kelamin",
+            gender_male: "Laki-laki",
+            gender_female: "Perempuan",
+            select_country: "Pilih Negara",
+            select_school: "Pilih Sekolah",
+            select_program: "Pilih Program",
+            select_type: "Pilih Jenis",
+            type_pc: "Pra-Kuliah",
+            type_ug: "Sarjana",
+            type_pg: "Pascasarjana",
+            ph_emergency: "Nomor telepon darurat",
+            ph_address: "Alamat saat ini",
+            ph_password: "Buat kata sandi yang kuat",
+            ph_confirm_password: "Konfirmasi kata sandi Anda",
+            terms_label: "Saya setuju dengan Syarat dan Ketentuan",
+            terms_intro: "Dengan mendaftar, Anda setuju untuk:",
+            terms_point1: "Memberikan informasi yang akurat dan lengkap",
+            terms_point2: "Menjaga kerahasiaan kredensial akun Anda",
+            terms_point3: "Mematuhi kebijakan dan peraturan AIU",
+            terms_point4: "Memperbarui informasi visa dan paspor Anda",
+            terms_point5: "Memberitahu Unit Layanan Mahasiswa Internasional tentang perubahan status Anda",
+            terms_conclusion: "Anda juga menyetujui pengumpulan dan pemrosesan data pribadi Anda untuk tujuan akademik dan administratif.",
+            btn_next: "Selanjutnya",
+            btn_previous: "Sebelumnya",
+            btn_register: "Selesaikan Pendaftaran",
+            btn_submit: "Kirim Pendaftaran",
+            have_account: "Sudah punya akun?",
+            login_here: "Masuk di sini",
+            go_to_login: "Pergi ke Masuk",
+            uni_name: "Universitas Internasional Albukhary | Unit Layanan Mahasiswa Internasional"
+        },
+        my: {
+            page_title: "မှတ်ပုံတင်ရန် - ISSU ဗီဇာစီမံခန့်ခွဲမှုစနစ်",
+            brand_title: "ISSU ကျောင်းသားမှတ်ပုံတင်ခြင်း",
+            welcome_subtitle: "နိုင်ငံတကာကျောင်းသားဝန်ဆောင်မှုဌာန - ကျောင်းသားအသစ်မှတ်ပုံတင်ခြင်း",
+            step1_label: "ကိုယ်ရေးအချက်အလက်",
+            step2_label: "ပညာရေးအချက်အလက်",
+            step3_label: "အကောင့်တည်ဆောက်ခြင်း",
+            personal_info_title: "ကိုယ်ရေးအချက်အလက်",
+            academic_info_title: "ပညာရေးအချက်အလက်",
+            account_security_title: "အကောင့်လုံခြုံရေး",
+            label_student_id: "ကျောင်းသားနံပါတ်",
+            label_email: "အီးမေးလ်လိပ်စာ",
+            label_first_name: "အမည်ရှေ့",
+            label_last_name: "အမည်နောက်",
+            label_phone: "ဖုန်းနံပါတ်",
+            label_dob: "မွေးသက္ကရာဇ်",
+            label_gender: "လိင်",
+            label_nationality: "နိုင်ငံသား",
+            label_passport: "နိုင်ငံကူးလက်မှတ်နံပါတ်",
+            label_emergency: "အရေးပေါ်ဆက်သွယ်ရန်",
+            label_school: "ကျောင်း",
+            label_program: "ပရိုဂရမ်",
+            label_student_type: "ကျောင်းသားအမျိုးအစား",
+            label_address: "လိပ်စာ",
+            label_password: "စကားဝှက်",
+            label_confirm_password: "စကားဝှက်အတည်ပြုရန်",
+            label_terms: "စည်းကမ်းချက်များနှင့်သတ်မှတ်ချက်များ",
+            email_hint: "သင်၏တရားဝင် AIU အီးမေးလ်ကိုအသုံးပြုပါ",
+            password_hint: "အနည်းဆုံး စာလုံး ၆ လုံး",
+            select_gender: "လိင် ရွေးချယ်ပါ",
+            gender_male: "ကျား",
+            gender_female: "မ",
+            select_country: "နိုင်ငံ ရွေးချယ်ပါ",
+            select_school: "ကျောင်း ရွေးချယ်ပါ",
+            select_program: "ပရိုဂရမ် ရွေးချယ်ပါ",
+            select_type: "အမျိုးအစား ရွေးချယ်ပါ",
+            type_pc: "ကောလိပ်မတက်မီ",
+            type_ug: "ဘွဲ့လွန်",
+            type_pg: "ဘွဲ့လွန်ကျောင်းသား",
+            ph_emergency: "အရေးပေါ်ဖုန်းနံပါတ်",
+            ph_address: "လက်ရှိလိပ်စာ",
+            ph_password: "ခိုင်မာသောစကားဝှက်ဖန်တီးပါ",
+            ph_confirm_password: "သင်၏စကားဝှက်ကိုအတည်ပြုပါ",
+            terms_label: "ကျွန်ုပ်သည် စည်းကမ်းချက်များနှင့် သတ်မှတ်ချက်များကို သဘောတူပါသည်",
+            terms_intro: "မှတ်ပုံတင်ခြင်းဖြင့် သင်သည် အောက်ပါတို့ကို သဘောတူပါသည်-",
+            terms_point1: "တိကျမှန်ကန်ပြီး ပြည့်စုံသော အချက်အလက်များကို ပေးပါ",
+            terms_point2: "သင်၏အကောင့်အထောက်အထားများ၏ လျှို့ဝှက်မှုကို ထိန်းသိမ်းပါ",
+            terms_point3: "AIU ၏မူဝါဒများနှင့် စည်းမျဉ်းများကို လိုက်နာပါ",
+            terms_point4: "သင်၏ဗီဇာနှင့် နိုင်ငံကူးလက်မှတ်အချက်အလက်များကို မွမ်းမံပါ",
+            terms_point5: "သင်၏အခြေအနေပြောင်းလဲမှုများကို နိုင်ငံတကာကျောင်းသားဝန်ဆောင်မှုဌာနသို့ အသိပေးပါ",
+            terms_conclusion: "သင်၏ကိုယ်ရေးကိုယ်တာအချက်အလက်များကို ပညာရေးနှင့် အုပ်ချုပ်ရေးဆိုင်ရာ ရည်ရွယ်ချက်များအတွက် စုဆောင်းခြင်းနှင့် ကိုင်တွယ်ခြင်းကိုလည်း သဘောတူပါသည်။",
+            btn_next: "နောက်တစ်ခု",
+            btn_previous: "ရှေ့တစ်ခု",
+            btn_register: "မှတ်ပုံတင်ခြင်းပြီးစီးရန်",
+            btn_submit: "မှတ်ပုံတင်ခြင်းတင်ပြရန်",
+            have_account: "အကောင့်ရှိပြီးသားလား?",
+            login_here: "ဤနေရာတွင် ဝင်ရောက်ပါ",
+            go_to_login: "ဝင်ရောက်ရန်သွားရန်",
+            uni_name: "Albukhary အပြည်ပြည်ဆိုင်ရာတက္ကသိုလ် | နိုင်ငံတကာကျောင်းသားဝန်ဆောင်မှုဌာန"
+        },
+        ar: {
+            page_title: "تسجيل - نظام إدارة تأشيرات ISSU",
+            brand_title: "تسجيل طالب ISSU",
+            welcome_subtitle: "وحدة خدمات الطلاب الدوليين - تسجيل طالب جديد",
+            step1_label: "المعلومات الشخصية",
+            step2_label: "المعلومات الأكاديمية",
+            step3_label: "إعداد الحساب",
+            personal_info_title: "المعلومات الشخصية",
+            academic_info_title: "المعلومات الأكاديمية",
+            account_security_title: "أمان الحساب",
+            label_student_id: "رقم الطالب",
+            label_email: "عنوان البريد الإلكتروني",
+            label_first_name: "الاسم الأول",
+            label_last_name: "اسم العائلة",
+            label_phone: "رقم الهاتف",
+            label_dob: "تاريخ الميلاد",
+            label_gender: "الجنس",
+            label_nationality: "الجنسية",
+            label_passport: "رقم جواز السفر",
+            label_emergency: "جهة اتصال الطوارئ",
+            label_school: "المدرسة",
+            label_program: "البرنامج",
+            label_student_type: "نوع الطالب",
+            label_address: "العنوان",
+            label_password: "كلمة المرور",
+            label_confirm_password: "تأكيد كلمة المرور",
+            label_terms: "الشروط والأحكام",
+            email_hint: "استخدم بريد AIU الرسمي الخاص بك",
+            password_hint: "6 أحرف على الأقل",
+            select_gender: "اختر الجنس",
+            gender_male: "ذكر",
+            gender_female: "أنثى",
+            select_country: "اختر الدولة",
+            select_school: "اختر المدرسة",
+            select_program: "اختر البرنامج",
+            select_type: "اختر النوع",
+            type_pc: "ما قبل الكلية",
+            type_ug: "المرحلة الجامعية",
+            type_pg: "الدراسات العليا",
+            ph_emergency: "رقم هاتف الطوارئ",
+            ph_address: "العنوان الحالي",
+            ph_password: "أنشئ كلمة مرور قوية",
+            ph_confirm_password: "قم بتأكيد كلمة المرور الخاصة بك",
+            terms_label: "أوافق على الشروط والأحكام",
+            terms_intro: "بالتسجيل، فإنك توافق على:",
+            terms_point1: "تقديم معلومات دقيقة وكاملة",
+            terms_point2: "الحفاظ على سرية بيانات اعتماد حسابك",
+            terms_point3: "الامتثال لسياسات وأنظمة AIU",
+            terms_point4: "تحديث معلومات التأشيرة وجواز السفر الخاصة بك",
+            terms_point5: "إخطار وحدة خدمات الطلاب الدوليين بأي تغييرات في حالتك",
+            terms_conclusion: "أنت توافق أيضًا على جمع ومعالجة بياناتك الشخصية للأغراض الأكاديمية والإدارية.",
+            btn_next: "التالي",
+            btn_previous: "السابق",
+            btn_register: "إكمال التسجيل",
+            btn_submit: "إرسال التسجيل",
+            have_account: "هل لديك حساب بالفعل؟",
+            login_here: "تسجيل الدخول هنا",
+            go_to_login: "اذهب لتسجيل الدخول",
+            uni_name: "جامعة البخاري الدولية | وحدة خدمات الطلاب الدوليين"
+        },
+        si: {
+            page_title: "ලියාපදිංචි වන්න - ISSU වීසා කළමනාකරණ පද්ධතිය",
+            brand_title: "ISSU ශිෂ්‍ය ලියාපදිංචි කිරීම",
+            welcome_subtitle: "ජාත්‍යන්තර ශිෂ්‍ය සේවා ඒකකය - නව ශිෂ්‍ය ලියාපදිංචි කිරීම",
+            step1_label: "පෞද්ගලික තොරතුරු",
+            step2_label: "ශාස්ත්‍රීය තොරතුරු",
+            step3_label: "ගිණුම් සැකසුම",
+            personal_info_title: "පෞද්ගලික තොරතුරු",
+            academic_info_title: "ශාස්ත්‍රීය තොරතුරු",
+            account_security_title: "ගිණුම් ආරක්ෂාව",
+            label_student_id: "ශිෂ්‍ය අංකය",
+            label_email: "විද්‍යුත් තැපැල් ලිපිනය",
+            label_first_name: "මුල් නම",
+            label_last_name: "අවසාන නම",
+            label_phone: "දුරකථන අංකය",
+            label_dob: "උපන් දිනය",
+            label_gender: "ලිංගය",
+            label_nationality: "ජාතිකත්වය",
+            label_passport: "පාස්පෝර්ට් අංකය",
+            label_emergency: "හදිසි සම්බන්ධතාව",
+            label_school: "විද්‍යාලය",
+            label_program: "වැඩසටහන",
+            label_student_type: "ශිෂ්‍ය වර්ගය",
+            label_address: "ලිපිනය",
+            label_password: "මුරපදය",
+            label_confirm_password: "මුරපදය තහවුරු කරන්න",
+            label_terms: "නියමයන් සහ කොන්දේසි",
+            email_hint: "ඔබගේ නිල AIU විද්‍යුත් තැපෑල භාවිතා කරන්න",
+            password_hint: "අවම අක්ෂර 6 ක්",
+            select_gender: "ලිංගය තෝරන්න",
+            gender_male: "පිරිමි",
+            gender_female: "ගැහැණු",
+            select_country: "රට තෝරන්න",
+            select_school: "විද්‍යාලය තෝරන්න",
+            select_program: "වැඩසටහන තෝරන්න",
+            select_type: "වර්ගය තෝරන්න",
+            type_pc: "පූර්ව විද්‍යාල",
+            type_ug: "උපාධි පෙර සූදානම්",
+            type_pg: "පශ්චාත් උපාධි",
+            ph_emergency: "හදිසි දුරකථන අංකය",
+            ph_address: "වර්තමාන ලිපිනය",
+            ph_password: "ශක්තිමත් මුරපදයක් සාදන්න",
+            ph_confirm_password: "ඔබගේ මුරපදය තහවුරු කරන්න",
+            terms_label: "මම නියමයන් සහ කොන්දේසි වලට එකඟ වෙමි",
+            terms_intro: "ලියාපදිංචි වීමෙන්, ඔබ පහත සඳහන් දේ සඳහා එකඟ වේ:",
+            terms_point1: "නිවැරදි සහ සම්පූර්ණ තොරතුරු සපයන්න",
+            terms_point2: "ඔබේ ගිණුම් අක්තපත්‍රවල රහස්‍යතාව රැකගන්න",
+            terms_point3: "AIU හි ප්‍රතිපත්ති සහ රෙගුලාසි වලට අනුගත වන්න",
+            terms_point4: "ඔබේ වීසා සහ පාස්පෝර්ට් තොරතුරු යාවත්කාලීන කරගන්න",
+            terms_point5: "ඔබේ තත්ත්වයේ ඕනෑම වෙනසක් ජාත්‍යන්තර ශිෂ්‍ය සේවා ඒකකයට දන්වන්න",
+            terms_conclusion: "ශාත්‍රීය සහ පරිපාලන අරමුණු සඳහා ඔබේ පෞද්ගලික දත්ත එකතු කිරීම සහ සැකසීමට ද ඔබ එකඟ වේ.",
+            btn_next: "ඊළඟ",
+            btn_previous: "කලින්",
+            btn_register: "ලියාපදිංචි කිරීම සම්පූර්ණ කරන්න",
+            btn_submit: "ලියාපදිංචි කිරීම ඉදිරිපත් කරන්න",
+            have_account: "දැනටමත් ගිණුමක් තිබේද?",
+            login_here: "මෙහි පිවිසෙන්න",
+            go_to_login: "පිවිසීමට යන්න",
+            uni_name: "Albukhary ජාත්‍යන්තර විශ්වවිද්‍යාලය | ජාත්‍යන්තර ශිෂ්‍ය සේවා ඒකකය"
         }
+    };
 
-        const savedLang = localStorage.getItem("issu_lang") || "en";
-        document.getElementById("langSelect").value = savedLang;
-        applyLanguage(savedLang);
+    function applyLanguage(lang) {
+        const dict = translations[lang] || translations.en;
 
-        document.getElementById("langSelect").addEventListener("change", function() {
-            applyLanguage(this.value);
+        // Update page title
+        document.title = dict.page_title || translations.en.page_title;
+
+        // Update text content
+        document.querySelectorAll("[data-i18n]").forEach(el => {
+            const key = el.getAttribute("data-i18n");
+            if (dict[key]) {
+                // For RTL languages, add special handling if needed
+                if (lang === "ar" || lang === "my") {
+                    el.style.textAlign = 'right';
+                    el.style.direction = (lang === "ar") ? 'rtl' : 'ltr';
+                }
+                el.textContent = dict[key];
+            }
         });
 
-        let currentStep = 1;
-        const totalSteps = 3;
-        
-        function updateProgress() {
-            // Update step indicators
-            document.querySelectorAll('.step').forEach((step, index) => {
-                step.classList.remove('active', 'completed');
-                const stepNum = parseInt(step.getAttribute('data-step'));
-                
-                if (stepNum < currentStep) {
-                    step.classList.add('completed');
-                } else if (stepNum === currentStep) {
-                    step.classList.add('active');
+        // Update placeholders
+        document.querySelectorAll("[data-i18n-ph]").forEach(el => {
+            const key = el.getAttribute("data-i18n-ph");
+            if (dict[key]) el.setAttribute("placeholder", dict[key]);
+        });
+
+        // Update option values for dropdowns
+        document.querySelectorAll("option[data-i18n]").forEach(option => {
+            const key = option.getAttribute("data-i18n");
+            if (dict[key]) option.textContent = dict[key];
+        });
+
+        // RTL for Arabic
+        if (lang === "ar") {
+            document.documentElement.setAttribute("dir", "rtl");
+            document.documentElement.lang = "ar";
+            document.querySelectorAll('.form-control, .input-group-text, select, textarea, .form-label, .section-title, .step-label, .logo-text, .logo-subtitle').forEach(el => {
+                el.style.textAlign = 'right';
+                el.style.direction = 'rtl';
+            });
+            // Adjust padding for RTL
+            document.querySelectorAll('.input-group').forEach(group => {
+                const text = group.querySelector('.input-group-text');
+                if (text && text.parentElement === group) {
+                    text.style.borderRadius = '0 12px 12px 0';
+                    const input = group.querySelector('.form-control');
+                    if (input) {
+                        input.style.borderRadius = '12px 0 0 12px';
+                    }
                 }
             });
-            
-            // Show current step content
-            document.querySelectorAll('.step-content').forEach(content => {
-                content.classList.remove('active');
+        } else {
+            document.documentElement.setAttribute("dir", "ltr");
+            document.documentElement.lang = lang;
+            document.querySelectorAll('.form-control, .input-group-text, select, textarea, .form-label, .section-title, .step-label, .logo-text, .logo-subtitle').forEach(el => {
+                el.style.textAlign = 'left';
+                el.style.direction = 'ltr';
             });
-            document.getElementById(`step${currentStep}`).classList.add('active');
+            // Reset padding for LTR
+            document.querySelectorAll('.input-group').forEach(group => {
+                const text = group.querySelector('.input-group-text');
+                if (text && text.parentElement === group) {
+                    text.style.borderRadius = '12px 0 0 12px';
+                    const input = group.querySelector('.form-control');
+                    if (input) {
+                        input.style.borderRadius = '0 12px 12px 0';
+                    }
+                }
+            });
         }
-        
-        function nextStep() {
-            // Validate current step before proceeding
-            if (validateStep(currentStep)) {
-                if (currentStep < totalSteps) {
-                    currentStep++;
-                    updateProgress();
-                }
+
+        // For Myanmar (Burmese)
+        if (lang === "my") {
+            document.querySelectorAll('.form-control, .input-group-text, select, textarea, .form-label, .section-title, .step-label, .logo-text, .logo-subtitle').forEach(el => {
+                el.style.fontFamily = "'Padauk', 'Myanmar3', 'Poppins', sans-serif";
+            });
+        } else {
+            document.querySelectorAll('.form-control, .input-group-text, select, textarea, .form-label, .section-title, .step-label, .logo-text, .logo-subtitle').forEach(el => {
+                el.style.fontFamily = "'Poppins', sans-serif";
+            });
+        }
+
+        localStorage.setItem("issu_lang", lang);
+    }
+
+    const savedLang = localStorage.getItem("issu_lang") || "en";
+    document.getElementById("langSelect").value = savedLang;
+    applyLanguage(savedLang);
+
+    document.getElementById("langSelect").addEventListener("change", function() {
+        applyLanguage(this.value);
+    });
+
+    let currentStep = 1;
+    const totalSteps = 3;
+
+    function updateProgress() {
+        // Update step indicators
+        document.querySelectorAll('.step').forEach((step, index) => {
+            step.classList.remove('active', 'completed');
+            const stepNum = parseInt(step.getAttribute('data-step'));
+
+            if (stepNum < currentStep) {
+                step.classList.add('completed');
+            } else if (stepNum === currentStep) {
+                step.classList.add('active');
             }
-        }
-        
-        function prevStep() {
-            if (currentStep > 1) {
-                currentStep--;
+        });
+
+        // Show current step content
+        document.querySelectorAll('.step-content').forEach(content => {
+            content.classList.remove('active');
+        });
+        document.getElementById(`step${currentStep}`).classList.add('active');
+    }
+
+    function nextStep() {
+        // Validate current step before proceeding
+        if (validateStep(currentStep)) {
+            if (currentStep < totalSteps) {
+                currentStep++;
                 updateProgress();
             }
         }
-        
-        function validateStep(step) {
-            let isValid = true;
-            const stepElement = document.getElementById(`step${step}`);
-            
-            // Check all required fields in current step
-            const requiredFields = stepElement.querySelectorAll('[required]');
-            requiredFields.forEach(field => {
-                if (!field.value.trim()) {
-                    field.classList.add('is-invalid');
-                    isValid = false;
-                } else {
-                    field.classList.remove('is-invalid');
-                }
-            });
-            
-            // Special validations for step 1
-            if (step === 1) {
-                const email = document.getElementById('email');
-                if (email.value && !validateEmail(email.value)) {
-                    email.classList.add('is-invalid');
-                    isValid = false;
-                }
-                
-                const phone = document.getElementById('phone');
-                if (phone.value && !validatePhone(phone.value)) {
-                    phone.classList.add('is-invalid');
-                    isValid = false;
-                }
-            }
-            
-            // Special validations for step 3
-            if (step === 3) {
-                const password = document.getElementById('password');
-                const confirmPassword = document.getElementById('confirm_password');
-                
-                if (password.value.length < 6) {
-                    password.classList.add('is-invalid');
-                    isValid = false;
-                }
-                
-                if (password.value !== confirmPassword.value) {
-                    confirmPassword.classList.add('is-invalid');
-                    isValid = false;
-                }
-                
-                const terms = document.getElementById('terms');
-                if (!terms.checked) {
-                    terms.classList.add('is-invalid');
-                    isValid = false;
-                } else {
-                    terms.classList.remove('is-invalid');
-                }
-            }
-            
-            return isValid;
+    }
+
+    function prevStep() {
+        if (currentStep > 1) {
+            currentStep--;
+            updateProgress();
         }
-        
-        function validateEmail(email) {
-            const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            return re.test(email);
-        }
-        
-        function validatePhone(phone) {
-            // Basic phone validation - accepts +, numbers, spaces, dashes
-            const re = /^[\d\s\-\+\(\)]{10,}$/;
-            return re.test(phone);
-        }
-        
-        function togglePassword(fieldId) {
-            const field = document.getElementById(fieldId);
-            const icon = field.nextElementSibling.querySelector('i');
-            
-            if (field.type === 'password') {
-                field.type = 'text';
-                icon.classList.remove('bi-eye-slash');
-                icon.classList.add('bi-eye');
+    }
+
+    function validateStep(step) {
+        let isValid = true;
+        const stepElement = document.getElementById(`step${step}`);
+
+        // Check all required fields in current step
+        const requiredFields = stepElement.querySelectorAll('[required]');
+        requiredFields.forEach(field => {
+            if (!field.value.trim()) {
+                field.classList.add('is-invalid');
+                isValid = false;
             } else {
-                field.type = 'password';
-                icon.classList.remove('bi-eye');
-                icon.classList.add('bi-eye-slash');
-            }
-        }
-        
-        // Initialize form validation on submit
-        document.getElementById('registrationForm').addEventListener('submit', function(e) {
-            // Validate all steps before submission
-            for (let step = 1; step <= totalSteps; step++) {
-                if (!validateStep(step)) {
-                    e.preventDefault();
-                    // Go to first invalid step
-                    currentStep = step;
-                    updateProgress();
-                    return;
-                }
-            }
-            
-            // If all validation passes, show confirmation
-            const currentLang = localStorage.getItem("issu_lang") || "en";
-            const dict = translations[currentLang] || translations.en;
-            const confirmMsg = "Are you sure you want to submit your registration? Please verify all information is correct.";
-            
-            if (!confirm(confirmMsg)) {
-                e.preventDefault();
+                field.classList.remove('is-invalid');
             }
         });
-        
-        // Real-time validation for fields
-        document.querySelectorAll('input, select').forEach(field => {
-            field.addEventListener('blur', function() {
-                if (this.hasAttribute('required') && !this.value.trim()) {
+
+        // Special validations for step 1
+        if (step === 1) {
+            const email = document.getElementById('email');
+            if (email.value && !validateEmail(email.value)) {
+                email.classList.add('is-invalid');
+                isValid = false;
+            }
+
+            const phone = document.getElementById('phone');
+            if (phone.value && !validatePhone(phone.value)) {
+                phone.classList.add('is-invalid');
+                isValid = false;
+            }
+        }
+
+        // Special validations for step 3
+        if (step === 3) {
+            const password = document.getElementById('password');
+            const confirmPassword = document.getElementById('confirm_password');
+
+            if (password.value.length < 6) {
+                password.classList.add('is-invalid');
+                isValid = false;
+            }
+
+            if (password.value !== confirmPassword.value) {
+                confirmPassword.classList.add('is-invalid');
+                isValid = false;
+            }
+
+            const terms = document.getElementById('terms');
+            if (!terms.checked) {
+                terms.classList.add('is-invalid');
+                isValid = false;
+            } else {
+                terms.classList.remove('is-invalid');
+            }
+        }
+
+        return isValid;
+    }
+
+    function validateEmail(email) {
+    const re = /^[a-z0-9._%+\-]+@student\.aiu\.edu\.my$/i;
+    return re.test(email);
+}
+
+
+    function validatePhone(phone) {
+        // Basic phone validation - accepts +, numbers, spaces, dashes
+        const re = /^[\d\s\-\+\(\)]{10,}$/;
+        return re.test(phone);
+    }
+
+    function togglePassword(fieldId) {
+        const field = document.getElementById(fieldId);
+        const icon = field.nextElementSibling.querySelector('i');
+
+        if (field.type === 'password') {
+            field.type = 'text';
+            icon.classList.remove('bi-eye-slash');
+            icon.classList.add('bi-eye');
+        } else {
+            field.type = 'password';
+            icon.classList.remove('bi-eye');
+            icon.classList.add('bi-eye-slash');
+        }
+    }
+
+                function getPasswordStrength(pw) {
+    let score = 0;
+
+    if (pw.length >= 6) score++;
+    if (pw.length >= 10) score++;
+    if (/[A-Z]/.test(pw)) score++;
+    if (/[a-z]/.test(pw)) score++;
+    if (/[0-9]/.test(pw)) score++;
+    if (/[^A-Za-z0-9]/.test(pw)) score++;
+
+    // Score normalization (0-6)
+    if (score <= 2) return { label: "Weak", percent: 25 };
+    if (score <= 4) return { label: "Medium", percent: 60 };
+    return { label: "Strong", percent: 100 };
+}
+
+function updatePasswordStrengthUI() {
+    const pw = document.getElementById('password');
+    const bar = document.getElementById('passwordStrengthBar');
+    const text = document.getElementById('passwordStrengthText');
+
+    if (!pw || !bar || !text) return;
+
+    const val = pw.value || '';
+    if (val.length === 0) {
+        bar.style.width = "0%";
+        bar.className = "progress-bar";
+        text.textContent = "Strength: -";
+        return;
+    }
+
+    const strength = getPasswordStrength(val);
+    bar.style.width = strength.percent + "%";
+
+    // Set bootstrap color class
+    bar.className = "progress-bar";
+    if (strength.label === "Weak") bar.classList.add("bg-danger");
+    else if (strength.label === "Medium") bar.classList.add("bg-warning");
+    else bar.classList.add("bg-success");
+
+    text.textContent = "Strength: " + strength.label;
+}
+
+
+    // Initialize form validation on submit
+    document.getElementById('registrationForm').addEventListener('submit', function(e) {
+        // Validate all steps before submission
+        for (let step = 1; step <= totalSteps; step++) {
+            if (!validateStep(step)) {
+                e.preventDefault();
+                // Go to first invalid step
+                currentStep = step;
+                updateProgress();
+                return;
+            }
+        }
+
+        // If all validation passes, show confirmation
+        const currentLang = localStorage.getItem("issu_lang") || "en";
+        const dict = translations[currentLang] || translations.en;
+        const confirmMsg = "Are you sure you want to submit your registration? Please verify all information is correct.";
+
+        if (!confirm(confirmMsg)) {
+            e.preventDefault();
+        }
+    });
+
+    // Real-time validation for fields
+    document.querySelectorAll('input, select').forEach(field => {
+        field.addEventListener('blur', function() {
+            if (this.hasAttribute('required') && !this.value.trim()) {
+                this.classList.add('is-invalid');
+            } else {
+                this.classList.remove('is-invalid');
+            }
+
+            // Special validation for email
+            if (this.id === 'email' && this.value) {
+                if (!validateEmail(this.value)) {
                     this.classList.add('is-invalid');
                 } else {
                     this.classList.remove('is-invalid');
                 }
-                
-                // Special validation for email
-                if (this.id === 'email' && this.value) {
-                    if (!validateEmail(this.value)) {
-                        this.classList.add('is-invalid');
-                    } else {
-                        this.classList.remove('is-invalid');
-                    }
+            }
+
+            // Special validation for password match
+            if ((this.id === 'password' || this.id === 'confirm_password') &&
+                document.getElementById('password').value &&
+                document.getElementById('confirm_password').value) {
+
+                const password = document.getElementById('password');
+                const confirmPassword = document.getElementById('confirm_password');
+
+                if (password.value !== confirmPassword.value) {
+                    confirmPassword.classList.add('is-invalid');
+                } else {
+                    confirmPassword.classList.remove('is-invalid');
                 }
-                
-                // Special validation for password match
-                if ((this.id === 'password' || this.id === 'confirm_password') && 
-                    document.getElementById('password').value && 
-                    document.getElementById('confirm_password').value) {
-                    
-                    const password = document.getElementById('password');
-                    const confirmPassword = document.getElementById('confirm_password');
-                    
-                    if (password.value !== confirmPassword.value) {
-                        confirmPassword.classList.add('is-invalid');
-                    } else {
-                        confirmPassword.classList.remove('is-invalid');
-                    }
-                }
-            });
-            
-            field.addEventListener('input', function() {
-                this.classList.remove('is-invalid');
-            });
+            }
         });
-        
-        // Initialize date picker max date (must be at least 16 years old)
-        const today = new Date();
-        const minDate = new Date(today.getFullYear() - 60, today.getMonth(), today.getDate());
-        const maxDate = new Date(today.getFullYear() - 16, today.getMonth(), today.getDate());
-        
-        document.getElementById('date_of_birth').setAttribute('max', maxDate.toISOString().split('T')[0]);
-        document.getElementById('date_of_birth').setAttribute('min', minDate.toISOString().split('T')[0]);
-        
-        // Add click handler for step indicators
-        document.querySelectorAll('.step').forEach(step => {
-            step.addEventListener('click', function() {
-                const stepNum = parseInt(this.getAttribute('data-step'));
-                // Only allow navigation to previous steps
-                if (stepNum <= currentStep) {
-                    currentStep = stepNum;
-                    updateProgress();
-                }
-            });
+
+        field.addEventListener('input', function() {
+            this.classList.remove('is-invalid');
         });
-        
-        // Auto-focus first field
-        document.getElementById('student_id').focus();
-    </script>
+    });
+
+    // Initialize date picker max date (must be at least 16 years old)
+    const today = new Date();
+    const minDate = new Date(today.getFullYear() - 60, today.getMonth(), today.getDate());
+    const maxDate = new Date(today.getFullYear() - 16, today.getMonth(), today.getDate());
+
+    document.getElementById('date_of_birth').setAttribute('max', maxDate.toISOString().split('T')[0]);
+    document.getElementById('date_of_birth').setAttribute('min', minDate.toISOString().split('T')[0]);
+
+    // Add click handler for step indicators
+    document.querySelectorAll('.step').forEach(step => {
+        step.addEventListener('click', function() {
+            const stepNum = parseInt(this.getAttribute('data-step'));
+            // Only allow navigation to previous steps
+            if (stepNum <= currentStep) {
+                currentStep = stepNum;
+                updateProgress();
+            }
+        });
+    });
+
+    // Password strength live update
+document.getElementById('password').addEventListener('input', updatePasswordStrengthUI);
+
+// Initialize once (in case browser autofills)
+updatePasswordStrengthUI();
+
+
+    // Auto-focus first field
+    document.getElementById('student_id').focus();
+</script>
 </body>
 </html>
