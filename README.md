@@ -607,7 +607,11 @@ Schema-first database import file generated from the existing SQL export. It inc
 
 ### `database/demo_data.sql`
 
-Demo/sample insert file generated from the existing SQL export. Insert blocks containing local upload paths are skipped so private upload references are not included.
+Demo/sample insert file generated from the existing SQL export. Insert blocks containing local upload paths are skipped so private upload references are not included. This file also includes the local test accounts used for XAMPP demonstrations.
+
+### `database/local_test_accounts.sql`
+
+Small local-only seed file for creating the documented student, staff, and admin test accounts. Use this when you want working logins without importing the full demo dataset.
 
 ### `database/security_updates.sql`
 
@@ -689,6 +693,7 @@ In phpMyAdmin:
 3. Choose `database/schema.sql`.
 4. Click **Go**.
 5. Optional: import `database/demo_data.sql` if you want sample/demo rows.
+6. Optional for local testing: import `database/local_test_accounts.sql` if you want the ready-made student, staff, and admin demo logins without importing the full demo dataset.
 
 For existing databases that were already imported from `issu.sql`, import:
 
@@ -697,6 +702,32 @@ database/security_updates.sql
 ```
 
 This adds the password reset, audit log, and enhanced notification structures without replacing existing data.
+
+To add only the local test users to an existing database, import:
+
+```text
+database/local_test_accounts.sql
+```
+
+This file is idempotent and can be imported again if you need to reset the demo account passwords.
+
+### Local Test Accounts
+
+These accounts are for XAMPP/local testing only. They are intentionally simple demo credentials so the student and staff/admin panels can be tested immediately after importing `database/local_test_accounts.sql` or `database/demo_data.sql`.
+
+| Panel | Login role | Email | Password |
+| --- | --- | --- | --- |
+| Student panel | Student | `student.demo@student.aiu.edu.my` | `Student@12345` |
+| Admin panel | Staff/Admin | `admin.demo@isu.local` | `Admin@12345` |
+| Staff panel | Staff/Admin | `staff.demo@isu.local` | `Staff@12345` |
+
+Important local testing notes:
+
+- Use the login page role selector that matches the account type.
+- The admin and staff accounts both use the staff/admin login path.
+- The student account includes a linked program, undergraduate profile row, nationality row, and active student visa record for dashboard testing.
+- The SQL stores password hashes, not plain text passwords.
+- Change or remove these accounts before any production deployment.
 
 ### 7. Configure Database Connection
 
@@ -1195,6 +1226,8 @@ http://localhost/isu_visa_mangement_system/
 
 For a fresh setup, import `database/schema.sql`. Optionally import `database/demo_data.sql`.
 
+For a smaller local test setup, import `database/schema.sql` and then `database/local_test_accounts.sql`.
+
 For an existing setup, import `database/security_updates.sql`.
 
 Many pages depend on stored procedures, so importing only table definitions may not be enough.
@@ -1301,14 +1334,15 @@ C:\xampp\htdocs\isu_visa_mangement_system
 3. Create database `issu`.
 4. Import `database/schema.sql`.
 5. Optional: import `database/demo_data.sql`.
-6. Copy `includes/db.example.php` to `includes/db.local.php` if your credentials differ.
-7. Open:
+6. Optional: import `database/local_test_accounts.sql` if you only need the documented test logins.
+7. Copy `includes/db.example.php` to `includes/db.local.php` if your credentials differ.
+8. Open:
 
 ```text
 http://localhost/isu_visa_mangement_system/
 ```
 
-8. Test:
+9. Test:
 
 - registration
 - login/logout
@@ -1326,8 +1360,9 @@ http://localhost/isu_visa_mangement_system/
 2. Create a MySQL database and user from cPanel.
 3. Import `database/schema.sql` with phpMyAdmin.
 4. Optional: import `database/demo_data.sql`.
-5. Create `includes/db.local.php` on the server with hosting credentials.
-6. Make upload folders writable:
+5. Optional for local/staging checks: import `database/local_test_accounts.sql`.
+6. Create `includes/db.local.php` on the server with hosting credentials.
+7. Make upload folders writable:
 
 ```text
 staff/uploads/profile
