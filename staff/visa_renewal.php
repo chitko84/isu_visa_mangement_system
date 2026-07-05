@@ -1,6 +1,6 @@
 <?php
 // staff/visa_renewal.php
-// Visa Renewal Processing (Staff)
+// Visa Renewal Processing (Staff) + DELETE application (with Bootstrap modal)
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
@@ -75,6 +75,14 @@ function safeDocUrl(string $path): string {
 }
 
 // ------------------------------------------------------------
+// CSRF
+// ------------------------------------------------------------
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
+}
+$csrf_token = $_SESSION['csrf_token'];
+
+// ------------------------------------------------------------
 // Status rules (must match your CHECK constraint)
 // visa_renewal_application.status: ('Pending','Submitted passport to ISSU','Passport collected')
 // ------------------------------------------------------------
@@ -84,7 +92,7 @@ $appStatusOptions = [
     'Passport collected'
 ];
 
-// Timeline stage options (now dropdown, not manual text)
+// Timeline stage options (dropdown)
 $stageOptions = [
     'Pending',
     'Submitted passport to ISSU',
@@ -100,8 +108,53 @@ $stageOptions = [
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = trim($_POST['action'] ?? '');
 
+    // CSRF check for all POST actions
+    $postedToken = $_POST['csrf_token'] ?? '';
+    if (!$postedToken || !hash_equals($_SESSION['csrf_token'] ?? '', $postedToken)) {
+        redirectTo("visa_renewal.php?error=" . urlencode("Invalid request (CSRF). Please try again."));
+    }
+
     try {
-        if ($action === 'update_app_status') {
+        if ($action === 'delete_application') {
+            $application_id = (int)($_POST['application_id'] ?? 0);
+            if ($application_id <= 0) throw new RuntimeException("Invalid application id.");
+
+            // Delete child rows first (safe if your DB does NOT have ON DELETE CASCADE)
+            // If you DO have cascade, these deletes are still fine.
+            $conn->begin_transaction();
+
+            // docs
+            $stmt = $conn->prepare("DELETE FROM visa_document WHERE application_id = ?");
+            if (!$stmt) throw new RuntimeException("Prepare failed: " . $conn->error);
+            $stmt->bind_param("i", $application_id);
+            if (!$stmt->execute()) throw new RuntimeException("Delete docs failed: " . $stmt->error);
+            $stmt->close();
+
+            // timeline
+            $stmt = $conn->prepare("DELETE FROM visa_renewal_status WHERE application_id = ?");
+            if (!$stmt) throw new RuntimeException("Prepare failed: " . $conn->error);
+            $stmt->bind_param("i", $application_id);
+            if (!$stmt->execute()) throw new RuntimeException("Delete timeline failed: " . $stmt->error);
+            $stmt->close();
+
+            // application
+            $stmt = $conn->prepare("DELETE FROM visa_renewal_application WHERE application_id = ? LIMIT 1");
+            if (!$stmt) throw new RuntimeException("Prepare failed: " . $conn->error);
+            $stmt->bind_param("i", $application_id);
+            if (!$stmt->execute()) throw new RuntimeException("Delete application failed: " . $stmt->error);
+
+            if ($stmt->affected_rows <= 0) {
+                $stmt->close();
+                $conn->rollback();
+                throw new RuntimeException("Delete failed: application not found.");
+            }
+            $stmt->close();
+
+            $conn->commit();
+
+            redirectTo("visa_renewal.php?msg=" . urlencode("Application deleted successfully."));
+
+        } elseif ($action === 'update_app_status') {
             $application_id = (int)($_POST['application_id'] ?? 0);
             $new_status = trim($_POST['new_status'] ?? '');
             $remarks = trim($_POST['remarks'] ?? '');
@@ -195,7 +248,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } catch (Throwable $e) {
-        redirectTo("visa_renewal.php?error=" . urlencode($e->getMessage()) . (isset($_POST['application_id']) ? "&view=".(int)$_POST['application_id'] : ""));
+        $fallbackView = isset($_POST['application_id']) ? ("&view=".(int)$_POST['application_id']) : "";
+        redirectTo("visa_renewal.php?error=" . urlencode($e->getMessage()) . $fallbackView);
     }
 }
 
@@ -421,9 +475,17 @@ if ($view <= 0) {
       <div class="text-muted">Review student applications, view documents, update status timeline, and update visa records</div>
     </div>
     <?php if ($view > 0): ?>
-      <a class="btn btn-outline-secondary" href="visa_renewal.php">
-        <i class="bi bi-arrow-left"></i> Back to List
-      </a>
+      <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary" href="visa_renewal.php">
+          <i class="bi bi-arrow-left"></i> Back to List
+        </a>
+
+        <!-- Delete trigger -->
+        <button type="button" class="btn btn-outline-danger"
+                data-bs-toggle="modal" data-bs-target="#deleteAppModal">
+          <i class="bi bi-trash"></i> Delete Application
+        </button>
+      </div>
     <?php endif; ?>
   </div>
 
@@ -678,6 +740,7 @@ if ($view <= 0) {
             <div class="card-body">
 
               <form method="post" class="row g-2 align-items-end mb-3">
+                <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
                 <input type="hidden" name="action" value="add_stage">
                 <input type="hidden" name="application_id" value="<?php echo (int)$detail["application_id"]; ?>">
 
@@ -796,6 +859,7 @@ if ($view <= 0) {
               </div>
 
               <form method="post" id="approveVisaForm" class="row g-2">
+                <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
                 <input type="hidden" name="action" value="approve_and_update_visa">
                 <input type="hidden" name="application_id" value="<?php echo (int)$detail["application_id"]; ?>">
                 <input type="hidden" name="student_id" value="<?php echo (int)$detail["student_id"]; ?>">
@@ -861,7 +925,7 @@ if ($view <= 0) {
         </div>
       </div>
 
-      <!-- Modal -->
+      <!-- Approve Modal -->
       <div class="modal fade" id="approveConfirmModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
           <div class="modal-content">
@@ -892,11 +956,45 @@ if ($view <= 0) {
         </div>
       </div>
 
+      <!-- Delete Modal -->
+      <div class="modal fade" id="deleteAppModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+
+            <div class="modal-header">
+              <h5 class="modal-title text-danger">Delete Application</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <div class="modal-body">
+              Are you sure you want to delete <strong>Application #<?php echo (int)$detail["application_id"]; ?></strong>?
+              <div class="text-muted small mt-2">
+                This will also delete its timeline stages and uploaded documents (records in DB).
+                This action cannot be undone.
+              </div>
+            </div>
+
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+
+              <form method="post" class="m-0">
+                <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
+                <input type="hidden" name="action" value="delete_application">
+                <input type="hidden" name="application_id" value="<?php echo (int)$detail["application_id"]; ?>">
+                <button type="submit" class="btn btn-danger">
+                  Yes, Delete
+                </button>
+              </form>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
       <script>
         (function () {
           const yesBtn = document.getElementById('approveConfirmYesBtn');
           const realSubmit = document.getElementById('approveRealSubmitBtn');
-
           if (yesBtn && realSubmit) {
             yesBtn.addEventListener('click', function () {
               realSubmit.click();

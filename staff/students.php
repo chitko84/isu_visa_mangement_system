@@ -2,7 +2,7 @@
 // staff/students.php
 
 $page_title = "Students - Staff Portal";
-require_once __DIR__ . "/header.php"; // must provide $conn
+require_once __DIR__ . "/header.php"; // must provide $conn (and usually session)
 
 // ------------------------------------------------------------
 // Helpers
@@ -29,18 +29,35 @@ function buildQueryString(array $params): string {
 function redirectTo(string $qs = ""): void {
     $url = "students.php" . ($qs ? ("?" . $qs) : "");
 
-    // If headers are still possible, do normal redirect
     if (!headers_sent()) {
         header("Location: " . $url);
         exit();
     }
 
-    // Otherwise fallback to JS redirect
     echo '<script>window.location.href=' . json_encode($url) . ';</script>';
     echo '<noscript><meta http-equiv="refresh" content="0;url=' . h($url) . '"></noscript>';
     exit();
 }
 
+// build sort links
+function sortLink(string $label, string $key, string $currentSort, string $currentDir, string $q, int $page): string {
+    $nextDir = "asc";
+    if ($currentSort === $key && strtolower($currentDir) === "asc") $nextDir = "desc";
+
+    $qs = buildQueryString([
+        "q" => $q,
+        "page" => $page,
+        "sort" => $key,
+        "dir" => $nextDir
+    ]);
+
+    $arrow = "";
+    if ($currentSort === $key) {
+        $arrow = (strtolower($currentDir) === "asc") ? " ▲" : " ▼";
+    }
+
+    return '<a href="students.php?' . h($qs) . '" class="text-decoration-none">' . h($label) . $arrow . '</a>';
+}
 
 // ------------------------------------------------------------
 // State
@@ -73,9 +90,55 @@ $sortMap = [
 ];
 $sortCol = $sortMap[$sort] ?? "s.student_id";
 
+// ------------------------------------------------------------
+// CSRF (recommended)
+// ------------------------------------------------------------
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
+}
+$csrf_token = $_SESSION['csrf_token'];
+
 // success flags
 if (($_GET['msg'] ?? '') === 'updated') $success = "Student updated successfully.";
+if (($_GET['msg'] ?? '') === 'deleted') $success = "Student deleted successfully.";
 
+// ------------------------------------------------------------
+// DELETE student (POST)
+// ------------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_student') {
+    $sid = (int)($_POST['student_id'] ?? 0);
+
+    $postedToken = $_POST['csrf_token'] ?? '';
+    if (!$postedToken || !hash_equals($_SESSION['csrf_token'] ?? '', $postedToken)) {
+        $error = "Invalid request (CSRF). Please try again.";
+    } elseif ($sid <= 0) {
+        $error = "Invalid student ID.";
+    } else {
+        try {
+            $stmt = $conn->prepare("DELETE FROM student WHERE student_id = ? LIMIT 1");
+            $stmt->bind_param("i", $sid);
+            $stmt->execute();
+
+            if ($stmt->affected_rows > 0) {
+                $stmt->close();
+
+                redirectTo(buildQueryString([
+                    "q" => $q,
+                    "page" => $page,
+                    "sort" => $sort,
+                    "dir" => strtolower($dir),
+                    "msg" => "deleted"
+                ]));
+            } else {
+                $stmt->close();
+                $error = "Delete failed: student not found.";
+            }
+        } catch (Throwable $e) {
+            // Common cause: FK constraints (child rows exist) without ON DELETE CASCADE
+            $error = "Delete failed: " . $e->getMessage();
+        }
+    }
+}
 
 // ------------------------------------------------------------
 // UPDATE student (EDIT) - direct update (no proc)
@@ -83,7 +146,10 @@ if (($_GET['msg'] ?? '') === 'updated') $success = "Student updated successfully
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_student') {
     $sid = (int)($_POST['student_id'] ?? 0);
 
-    if ($sid <= 0) {
+    $postedToken = $_POST['csrf_token'] ?? '';
+    if (!$postedToken || !hash_equals($_SESSION['csrf_token'] ?? '', $postedToken)) {
+        $error = "Invalid request (CSRF). Please try again.";
+    } elseif ($sid <= 0) {
         $error = "Invalid student ID.";
     } else {
         $first = trim($_POST['first_name'] ?? "");
@@ -209,7 +275,6 @@ $students = [];
 try {
     $orderBy = $sortCol . " " . $dir;
 
-    // special case for name: also order by last_name for nicer sorting
     if ($sort === "name") {
         $orderBy = "s.first_name $dir, s.last_name $dir";
     }
@@ -237,26 +302,6 @@ try {
     $stmt->close();
 } catch (Throwable $e) {
     $error = $error ?: ("List load error: " . $e->getMessage());
-}
-
-// build sort links
-function sortLink(string $label, string $key, string $currentSort, string $currentDir, string $q, int $page): string {
-    $nextDir = "asc";
-    if ($currentSort === $key && strtolower($currentDir) === "asc") $nextDir = "desc";
-
-    $qs = buildQueryString([
-        "q" => $q,
-        "page" => $page,
-        "sort" => $key,
-        "dir" => $nextDir
-    ]);
-
-    $arrow = "";
-    if ($currentSort === $key) {
-        $arrow = (strtolower($currentDir) === "asc") ? " ▲" : " ▼";
-    }
-
-    return '<a href="students.php?' . h($qs) . '" class="text-decoration-none">' . h($label) . $arrow . '</a>';
 }
 ?>
 <style>
@@ -295,6 +340,7 @@ function sortLink(string $label, string $key, string $currentSort, string $curre
                     <form method="post" class="row g-3">
                         <input type="hidden" name="action" value="update_student">
                         <input type="hidden" name="student_id" value="<?php echo (int)$selectedStudent['student_id']; ?>">
+                        <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
 
                         <div class="col-md-6">
                             <label class="form-label">First Name *</label>
@@ -346,11 +392,15 @@ function sortLink(string $label, string $key, string $currentSort, string $curre
                         </div>
                     </form>
                 <?php else: ?>
+                    <?php
+                        $panelName = trim(($selectedStudent['first_name'] ?? '') . ' ' . ($selectedStudent['last_name'] ?? ''));
+                        $panelId = (int)$selectedStudent['student_id'];
+                    ?>
                     <div class="d-flex align-items-center gap-3 mb-3">
                         <img class="avatar" src="<?php echo h(photoUrl($selectedStudent['profile_photo'] ?? null)); ?>" alt="Photo">
                         <div>
                             <div class="fw-semibold" style="font-size:1.1rem;">
-                                <?php echo h(trim(($selectedStudent['first_name'] ?? '') . " " . ($selectedStudent['last_name'] ?? ''))); ?>
+                                <?php echo h($panelName ?: ("Student " . $panelId)); ?>
                             </div>
                             <div class="text-muted"><?php echo h($selectedStudent['email'] ?? '-'); ?></div>
                         </div>
@@ -373,9 +423,22 @@ function sortLink(string $label, string $key, string $currentSort, string $curre
 
                     <div class="mt-3 d-flex gap-2">
                         <a class="btn btn-outline-primary"
-                           href="students.php?<?php echo h(buildQueryString(["q"=>$q,"page"=>$page,"sort"=>$sort,"dir"=>strtolower($dir),"edit_id"=>$selectedStudent['student_id']])); ?>">
+                           href="students.php?<?php echo h(buildQueryString(["q"=>$q,"page"=>$page,"sort"=>$sort,"dir"=>strtolower($dir),"edit_id"=>$panelId])); ?>">
                             Edit
                         </a>
+
+                        <!-- Delete (Modal trigger) -->
+                        <button
+                          type="button"
+                          class="btn btn-outline-danger js-delete-btn"
+                          data-bs-toggle="modal"
+                          data-bs-target="#deleteStudentModal"
+                          data-student-id="<?php echo (int)$panelId; ?>"
+                          data-student-name="<?php echo h($panelName ?: ('Student '.$panelId)); ?>"
+                        >
+                          Delete
+                        </button>
+
                         <a class="btn btn-outline-secondary"
                            href="students.php?<?php echo h(buildQueryString(["q"=>$q,"page"=>$page,"sort"=>$sort,"dir"=>strtolower($dir)])); ?>">
                             Close
@@ -424,8 +487,7 @@ function sortLink(string $label, string $key, string $currentSort, string $curre
                     <th><?php echo sortLink("School", "school", $sort, $dir, $q, $page); ?></th>
                     <th><?php echo sortLink("Nationality", "nationality", $sort, $dir, $q, $page); ?></th>
                     <th><?php echo sortLink("Status", "status", $sort, $dir, $q, $page); ?></th>
-                    <th style="width:160px;">Actions</th>
-
+                    <th style="width:220px;">Actions</th>
                 </tr>
                 </thead>
 
@@ -437,11 +499,12 @@ function sortLink(string $label, string $key, string $currentSort, string $curre
                         <?php
                         $sid = (int)$s['student_id'];
                         $name = trim(($s['first_name'] ?? '') . ' ' . ($s['last_name'] ?? ''));
+                        $displayName = $name ?: ("Student " . $sid);
                         ?>
                         <tr>
                             <td><img class="avatar" src="<?php echo h(photoUrl($s['profile_photo'] ?? null)); ?>" alt="Photo"></td>
                             <td class="fw-semibold"><?php echo $sid; ?></td>
-                            <td><?php echo h($name ?: '-'); ?></td>
+                            <td><?php echo h($displayName); ?></td>
                             <td><?php echo h($s['email'] ?? '-'); ?></td>
                             <td><?php echo h($s['phone'] ?? '-'); ?></td>
                             <td><?php echo h($s['program_name'] ?? '-'); ?></td>
@@ -459,6 +522,18 @@ function sortLink(string $label, string $key, string $currentSort, string $curre
                                    href="students.php?<?php echo h(buildQueryString(["q"=>$q,"page"=>$page,"sort"=>$sort,"dir"=>strtolower($dir),"edit_id"=>$sid])); ?>">
                                     Edit
                                 </a>
+
+                                <!-- Delete (Modal trigger) -->
+                                <button
+                                  type="button"
+                                  class="btn btn-sm btn-outline-danger js-delete-btn"
+                                  data-bs-toggle="modal"
+                                  data-bs-target="#deleteStudentModal"
+                                  data-student-id="<?php echo (int)$sid; ?>"
+                                  data-student-name="<?php echo h($displayName); ?>"
+                                >
+                                  Delete
+                                </button>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -487,5 +562,63 @@ function sortLink(string $label, string $key, string $currentSort, string $curre
     </div>
 
 </div>
+
+<!-- Delete Student Modal -->
+<div class="modal fade" id="deleteStudentModal" tabindex="-1" aria-labelledby="deleteStudentModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteStudentModalLabel">Confirm Delete</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="mb-2">
+          Are you sure you want to delete this student?
+        </div>
+        <div class="p-2 bg-light rounded">
+          <div class="fw-semibold" id="deleteStudentName">—</div>
+          <div class="text-muted small">Student ID: <span id="deleteStudentIdText">—</span></div>
+        </div>
+
+        <div class="text-danger small mt-2">
+          This action cannot be undone.
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+
+        <form method="post" class="m-0" id="deleteStudentForm">
+          <input type="hidden" name="action" value="delete_student">
+          <input type="hidden" name="student_id" id="deleteStudentIdInput" value="">
+          <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
+          <button type="submit" class="btn btn-danger">Yes, Delete</button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // Fill modal fields when a delete button is clicked
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('.js-delete-btn');
+    if (!btn) return;
+
+    const id = btn.getAttribute('data-student-id') || '';
+    const name = btn.getAttribute('data-student-name') || 'Student';
+
+    const idInput = document.getElementById('deleteStudentIdInput');
+    const idText  = document.getElementById('deleteStudentIdText');
+    const nameEl  = document.getElementById('deleteStudentName');
+
+    if (idInput) idInput.value = id;
+    if (idText) idText.textContent = id;
+    if (nameEl) nameEl.textContent = name;
+  });
+</script>
 
 <?php require_once __DIR__ . "/footer.php"; ?>

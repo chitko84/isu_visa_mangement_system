@@ -1,10 +1,9 @@
 <?php
 // staff/exit_management.php
+// Exit Management (Staff/Admin) — with Create / Edit / Delete + Delete Modal
 // IMPORTANT: Handle POST + redirects BEFORE including staff/header.php (which outputs HTML).
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+if (session_status() === PHP_SESSION_NONE) session_start();
 
 // ------------------------------
 // Auth (same logic as staff/header.php)
@@ -14,10 +13,9 @@ if (!isset($_SESSION['user_id']) || !in_array(($_SESSION['role'] ?? ''), ['staff
     exit();
 }
 
-// DB
 require_once __DIR__ . '/../includes/db.php';
 
-$staff_id = (int)$_SESSION['user_id'];
+$staff_id = (int)($_SESSION['user_id'] ?? 0);
 $role     = $_SESSION['role'] ?? 'staff';
 
 // ------------------------------------------------------------
@@ -34,9 +32,7 @@ function fmtDate($d): string {
 function clearStoredResults(mysqli $conn): void {
     while ($conn->more_results()) {
         $conn->next_result();
-        if ($res = $conn->store_result()) {
-            $res->free();
-        }
+        if ($res = $conn->store_result()) $res->free();
     }
 }
 
@@ -48,7 +44,6 @@ function callProc(mysqli $conn, string $sql, string $types = "", array $params =
     return $stmt;
 }
 
-// safe redirect that still works even if headers somehow sent
 function redirectTo(string $url): void {
     if (!headers_sent()) {
         header("Location: " . $url);
@@ -58,6 +53,12 @@ function redirectTo(string $url): void {
     echo '<noscript><meta http-equiv="refresh" content="0;url=' . h($url) . '"></noscript>';
     exit();
 }
+
+// CSRF
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
+}
+$csrf_token = $_SESSION['csrf_token'];
 
 $success = "";
 $error   = "";
@@ -69,13 +70,99 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $action = trim($_POST["action"] ?? "");
     $success = "";
     $error = "";
+    $selected_exit = (int)($_POST["exit_id"] ?? 0);
 
     try {
-        // Update exit status
+        $postedToken = $_POST['csrf_token'] ?? '';
+        if (!$postedToken || !hash_equals($_SESSION['csrf_token'] ?? '', $postedToken)) {
+            throw new RuntimeException("Invalid request (CSRF). Please try again.");
+        }
+
+        // ============================================================
+        // EXIT CASE: CREATE / UPDATE / DELETE
+        // ============================================================
+        if ($action === "create_exit_case") {
+            $student_id = (int)($_POST["student_id"] ?? 0);
+            $exit_type  = trim($_POST["exit_type"] ?? "");
+            $req_date   = trim($_POST["request_date"] ?? date('Y-m-d'));
+            $exit_stat  = trim($_POST["exit_status"] ?? "Pending");
+
+            $exitTypeOptions    = ["Completion","Withdrawal","Termination"];
+            $exitStatusOptions  = ["Pending","In Progress","Approved","Completed","Rejected","Cancelled"];
+
+            if ($student_id <= 0) throw new RuntimeException("Student is required.");
+            if (!in_array($exit_type, $exitTypeOptions, true)) throw new RuntimeException("Invalid exit type.");
+            if (!in_array($exit_stat, $exitStatusOptions, true)) $exit_stat = "Pending";
+            if ($req_date === "") $req_date = date('Y-m-d');
+
+            // Direct insert (simple & reliable)
+            $stmt = $conn->prepare("
+                INSERT INTO exit_case (student_id, exit_type, request_date, exit_status)
+                VALUES (?, ?, ?, ?)
+            ");
+            if (!$stmt) throw new RuntimeException("Prepare failed: " . $conn->error);
+            $stmt->bind_param("isss", $student_id, $exit_type, $req_date, $exit_stat);
+            if (!$stmt->execute()) throw new RuntimeException("Insert failed: " . $stmt->error);
+            $newExitId = (int)$conn->insert_id;
+            $stmt->close();
+
+            $success = "Exit case created.";
+            $selected_exit = $newExitId;
+        }
+
+        if ($action === "update_exit_case") {
+            $exit_id    = (int)($_POST["exit_id"] ?? 0);
+            $student_id = (int)($_POST["student_id"] ?? 0);
+            $exit_type  = trim($_POST["exit_type"] ?? "");
+            $req_date   = trim($_POST["request_date"] ?? "");
+            $exit_stat  = trim($_POST["exit_status"] ?? "");
+
+            $exitTypeOptions    = ["Completion","Withdrawal","Termination"];
+            $exitStatusOptions  = ["Pending","In Progress","Approved","Completed","Rejected","Cancelled"];
+
+            if ($exit_id <= 0) throw new RuntimeException("Invalid exit id.");
+            if ($student_id <= 0) throw new RuntimeException("Student is required.");
+            if (!in_array($exit_type, $exitTypeOptions, true)) throw new RuntimeException("Invalid exit type.");
+            if (!in_array($exit_stat, $exitStatusOptions, true)) throw new RuntimeException("Invalid exit status.");
+            if ($req_date === "") throw new RuntimeException("Request date is required.");
+
+            $stmt = $conn->prepare("
+                UPDATE exit_case
+                SET student_id = ?, exit_type = ?, request_date = ?, exit_status = ?
+                WHERE exit_id = ?
+                LIMIT 1
+            ");
+            if (!$stmt) throw new RuntimeException("Prepare failed: " . $conn->error);
+            $stmt->bind_param("isssi", $student_id, $exit_type, $req_date, $exit_stat, $exit_id);
+            if (!$stmt->execute()) throw new RuntimeException("Update failed: " . $stmt->error);
+            $stmt->close();
+
+            $success = "Exit case updated.";
+            $selected_exit = $exit_id;
+        }
+
+        if ($action === "delete_exit_case") {
+            $exit_id = (int)($_POST["exit_id"] ?? 0);
+            if ($exit_id <= 0) throw new RuntimeException("Invalid exit id.");
+
+            // If you have FK constraints, you may need to delete children first or use CASCADE.
+            // We'll attempt delete; any FK error will be shown.
+            $stmt = $conn->prepare("DELETE FROM exit_case WHERE exit_id = ? LIMIT 1");
+            if (!$stmt) throw new RuntimeException("Prepare failed: " . $conn->error);
+            $stmt->bind_param("i", $exit_id);
+            if (!$stmt->execute()) throw new RuntimeException("Delete failed: " . $stmt->error);
+            $stmt->close();
+
+            $success = "Exit case deleted.";
+            $selected_exit = 0;
+        }
+
+        // ============================================================
+        // EXISTING: Update exit status (procedure)
+        // ============================================================
         if ($action === "update_exit_status") {
             $exit_id    = (int)($_POST["exit_id"] ?? 0);
             $new_status = trim($_POST["exit_status"] ?? "");
-
             if ($exit_id <= 0 || $new_status === "") throw new RuntimeException("Invalid exit id / status.");
 
             clearStoredResults($conn);
@@ -86,11 +173,12 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $selected_exit = $exit_id;
         }
 
-        // Create clearance record
+        // ============================================================
+        // EXISTING: Create clearance record
+        // ============================================================
         if ($action === "create_clearance") {
             $exit_id = (int)($_POST["exit_id"] ?? 0);
             $status  = trim($_POST["clearance_status"] ?? "In Progress");
-
             if ($exit_id <= 0) throw new RuntimeException("Invalid exit id.");
             if (!in_array($status, ["In Progress", "Completed"], true)) $status = "In Progress";
 
@@ -102,21 +190,23 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $selected_exit = $exit_id;
         }
 
-        // Upsert unit clearance (by clearance_id + unit_name)
+        // ============================================================
+        // UNIT CLEARANCE: UPSERT / UPDATE / DELETE (add Edit via modal)
+        // ============================================================
         if ($action === "upsert_unit_clearance") {
-            $exit_id       = (int)($_POST["exit_id"] ?? 0);
-            $clearance_id  = (int)($_POST["clearance_id"] ?? 0);
-            $unit_name     = trim($_POST["unit_name"] ?? "");
-            $clr_date      = trim($_POST["clearance_date"] ?? "");
+            $exit_id      = (int)($_POST["exit_id"] ?? 0);
+            $clearance_id = (int)($_POST["clearance_id"] ?? 0);
+            $unit_name    = trim($_POST["unit_name"] ?? "");
+            $clr_date     = trim($_POST["clearance_date"] ?? "");
 
             if ($exit_id <= 0) throw new RuntimeException("Invalid exit id.");
             if ($clearance_id <= 0) throw new RuntimeException("Invalid clearance id.");
             if ($unit_name === "") throw new RuntimeException("Unit name is required.");
 
-            // allow NULL date
             $dateParam = ($clr_date !== "") ? $clr_date : null;
 
             clearStoredResults($conn);
+            // NOTE: types must match NULL handling: use "iss" and pass null works with mysqlnd
             callProc($conn, "CALL sp_staff_upsert_unit_clearance(?, ?, ?, @o_uc_id)", "iss",
                 [$clearance_id, $unit_name, $dateParam]
             )->close();
@@ -126,12 +216,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $selected_exit = $exit_id;
         }
 
-        // Update unit clearance (by unit_clearance_id)
         if ($action === "update_unit_clearance") {
-            $exit_id            = (int)($_POST["exit_id"] ?? 0);
-            $unit_clearance_id  = (int)($_POST["unit_clearance_id"] ?? 0);
-            $unit_name          = trim($_POST["unit_name"] ?? "");
-            $clr_date           = trim($_POST["clearance_date"] ?? "");
+            $exit_id           = (int)($_POST["exit_id"] ?? 0);
+            $unit_clearance_id = (int)($_POST["unit_clearance_id"] ?? 0);
+            $unit_name         = trim($_POST["unit_name"] ?? "");
+            $clr_date          = trim($_POST["clearance_date"] ?? "");
 
             if ($exit_id <= 0) throw new RuntimeException("Invalid exit id.");
             if ($unit_clearance_id <= 0) throw new RuntimeException("Invalid unit clearance id.");
@@ -149,7 +238,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $selected_exit = $exit_id;
         }
 
-        // Delete unit clearance
         if ($action === "delete_unit_clearance") {
             $exit_id           = (int)($_POST["exit_id"] ?? 0);
             $unit_clearance_id = (int)($_POST["unit_clearance_id"] ?? 0);
@@ -165,7 +253,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $selected_exit = $exit_id;
         }
 
-        // Add exit visa action
+        // ============================================================
+        // EXIT VISA ACTION: ADD / UPDATE / DELETE (add Edit via modal)
+        // ============================================================
         if ($action === "add_exit_visa_action") {
             $exit_id     = (int)($_POST["exit_id"] ?? 0);
             $action_type = trim($_POST["action_type"] ?? "");
@@ -173,9 +263,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $remarks     = trim($_POST["remarks"] ?? "");
 
             if ($exit_id <= 0) throw new RuntimeException("Invalid exit id.");
-            if (!in_array($action_type, ["Cancellation","Lapse","Transfer"], true)) {
-                throw new RuntimeException("Invalid action type.");
-            }
+            if (!in_array($action_type, ["Cancellation","Lapse","Transfer"], true)) throw new RuntimeException("Invalid action type.");
             if ($action_date === "") throw new RuntimeException("Action date is required.");
 
             $remarksParam = ($remarks !== "") ? $remarks : null;
@@ -190,7 +278,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $selected_exit = $exit_id;
         }
 
-        // Update exit visa action
         if ($action === "update_exit_visa_action") {
             $exit_id      = (int)($_POST["exit_id"] ?? 0);
             $exit_visa_id = (int)($_POST["exit_visa_id"] ?? 0);
@@ -200,9 +287,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
             if ($exit_id <= 0) throw new RuntimeException("Invalid exit id.");
             if ($exit_visa_id <= 0) throw new RuntimeException("Invalid exit visa id.");
-            if (!in_array($action_type, ["Cancellation","Lapse","Transfer"], true)) {
-                throw new RuntimeException("Invalid action type.");
-            }
+            if (!in_array($action_type, ["Cancellation","Lapse","Transfer"], true)) throw new RuntimeException("Invalid action type.");
             if ($action_date === "") throw new RuntimeException("Action date is required.");
 
             $remarksParam = ($remarks !== "") ? $remarks : null;
@@ -217,7 +302,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $selected_exit = $exit_id;
         }
 
-        // Delete exit visa action
         if ($action === "delete_exit_visa_action") {
             $exit_id      = (int)($_POST["exit_id"] ?? 0);
             $exit_visa_id = (int)($_POST["exit_visa_id"] ?? 0);
@@ -235,22 +319,23 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     } catch (Throwable $e) {
         $error = $e->getMessage();
-        // keep selected exit if possible
         $selected_exit = (int)($_POST["exit_id"] ?? 0);
     }
 
-    // redirect back to page (safe)
+    // redirect back to page, keep filters
     $url = "exit_management.php";
-    if (!empty($selected_exit)) {
-        $url .= "?exit_id=" . urlencode((string)$selected_exit);
-        if ($success) $url .= "&msg=" . urlencode($success);
-        if ($error)   $url .= "&error=" . urlencode($error);
-    } else {
-        $url .= "?";
-        if ($success) $url .= "msg=" . urlencode($success) . "&";
-        if ($error)   $url .= "error=" . urlencode($error);
-        $url = rtrim($url, "&?");
+    $qs = [];
+
+    // preserve filters
+    foreach (['q','status','type','page'] as $k) {
+        if (isset($_GET[$k]) && $_GET[$k] !== '') $qs[$k] = $_GET[$k];
     }
+
+    if (!empty($selected_exit)) $qs['exit_id'] = (string)$selected_exit;
+    if ($success) $qs['msg'] = $success;
+    if ($error)   $qs['error'] = $error;
+
+    if ($qs) $url .= "?" . http_build_query($qs);
     redirectTo($url);
 }
 
@@ -258,7 +343,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 // Now include header (HTML output starts here)
 // ------------------------------------------------------------
 $page_title = "Exit Management - ISU Staff Portal";
-require_once __DIR__ . "/header.php"; // provides nav + layout (HTML starts)
+require_once __DIR__ . "/header.php";
 
 // ------------------------------------------------------------
 // Messages from GET
@@ -289,6 +374,23 @@ function buildUrl(array $overrides = []): string {
         else $q[$k] = $v;
     }
     return "exit_management.php?" . http_build_query($q);
+}
+
+// Options
+$exitStatusOptions  = ["Pending","In Progress","Approved","Completed","Rejected","Cancelled"];
+$exitTypeOptions    = ["Completion","Withdrawal","Termination"];
+$clearStatusOptions = ["In Progress","Completed"];
+$visaActionOptions  = ["Cancellation","Lapse","Transfer"];
+
+// ------------------------------------------------------------
+// Load students for Create/Edit exit case modal
+// ------------------------------------------------------------
+$students = [];
+try {
+    $res = $conn->query("SELECT student_id, first_name, last_name, email FROM student ORDER BY student_id DESC LIMIT 500");
+    if ($res) $students = $res->fetch_all(MYSQLI_ASSOC);
+} catch (Throwable $e) {
+    $error = $error ?: ("Failed to load students: " . $e->getMessage());
 }
 
 // ------------------------------------------------------------
@@ -423,11 +525,6 @@ if ($selected_exit_id > 0) {
         $error = $error ?: ("Failed to load selected exit details: " . $e->getMessage());
     }
 }
-
-$exitStatusOptions  = ["Pending","In Progress","Approved","Completed","Rejected","Cancelled"];
-$exitTypeOptions    = ["Completion","Withdrawal","Termination"];
-$clearStatusOptions = ["In Progress","Completed"];
-$visaActionOptions  = ["Cancellation","Lapse","Transfer"];
 ?>
 
 <div class="container-fluid">
@@ -436,6 +533,12 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
     <div>
       <h3 class="mb-0">Exit Management</h3>
       <div class="text-muted">Manage exit requests, clearance progress, and exit visa actions</div>
+    </div>
+
+    <div>
+      <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#exitCaseModal" id="btnCreateExit">
+        <i class="bi bi-plus-circle"></i> Create Exit Case
+      </button>
     </div>
   </div>
 
@@ -511,7 +614,7 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
                     <th style="min-width:140px;">Request Date</th>
                     <th style="min-width:140px;">Exit Status</th>
                     <th style="min-width:170px;">Clearance</th>
-                    <th style="width:110px;"></th>
+                    <th style="width:210px;" class="text-end">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -520,9 +623,10 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
                       $isSelected = ((int)$r["exit_id"] === $selected_exit_id);
                       $name = trim(($r["first_name"] ?? "") . " " . ($r["last_name"] ?? ""));
                       $clr = $r["clearance_id"] ? ("#".$r["clearance_id"]." • ".($r["clearance_status"] ?? "-")) : "Not created";
+                      $exitId = (int)$r["exit_id"];
                     ?>
                     <tr class="<?php echo $isSelected ? "table-warning" : ""; ?>">
-                      <td class="text-muted"><?php echo h($r["exit_id"]); ?></td>
+                      <td class="text-muted"><?php echo h($exitId); ?></td>
                       <td>
                         <div class="fw-semibold"><?php echo h($name ?: ("Student ".$r["student_id"])); ?></div>
                         <div class="text-muted small">ID: <?php echo h($r["student_id"]); ?> • <?php echo h($r["email"] ?? "-"); ?></div>
@@ -536,9 +640,38 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
                       </td>
                       <td><?php echo h($clr); ?></td>
                       <td class="text-end">
-                        <a class="btn btn-sm btn-primary" href="<?php echo h(buildUrl(["exit_id" => (int)$r["exit_id"], "page" => $page])); ?>">
-                          Manage
-                        </a>
+                        <div class="d-flex justify-content-end gap-2 flex-wrap">
+                          <a class="btn btn-sm btn-primary" href="<?php echo h(buildUrl(["exit_id" => $exitId, "page" => $page])); ?>">
+                            Manage
+                          </a>
+
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-primary open-edit-exit"
+                            data-bs-toggle="modal"
+                            data-bs-target="#exitCaseModal"
+                            data-exit_id="<?php echo h($exitId); ?>"
+                            data-student_id="<?php echo h($r["student_id"]); ?>"
+                            data-exit_type="<?php echo h($r["exit_type"]); ?>"
+                            data-request_date="<?php echo h($r["request_date"]); ?>"
+                            data-exit_status="<?php echo h($r["exit_status"]); ?>"
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-danger open-delete"
+                            data-bs-toggle="modal"
+                            data-bs-target="#deleteModal"
+                            data-title="Delete Exit Case #<?php echo h($exitId); ?>?"
+                            data-body="This will permanently delete this exit case. If the case has clearance/actions, deletion may fail due to database constraints."
+                            data-action="delete_exit_case"
+                            data-exit_id="<?php echo h($exitId); ?>"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   <?php endforeach; ?>
@@ -602,6 +735,7 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
             <div class="border rounded p-3 mb-3">
               <strong>Exit Status</strong>
               <form method="post" class="row g-2 align-items-end mt-1">
+                <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
                 <input type="hidden" name="action" value="update_exit_status">
                 <input type="hidden" name="exit_id" value="<?php echo (int)$exit_id; ?>">
 
@@ -634,6 +768,7 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
 
               <?php if (!$clearance_id): ?>
                 <form method="post" class="row g-2 align-items-end mt-2">
+                  <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
                   <input type="hidden" name="action" value="create_clearance">
                   <input type="hidden" name="exit_id" value="<?php echo (int)$exit_id; ?>">
 
@@ -668,6 +803,7 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
                 <div class="text-muted">Create a clearance record first.</div>
               <?php else: ?>
                 <form method="post" class="row g-2 align-items-end mb-3">
+                  <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
                   <input type="hidden" name="action" value="upsert_unit_clearance">
                   <input type="hidden" name="exit_id" value="<?php echo (int)$exit_id; ?>">
                   <input type="hidden" name="clearance_id" value="<?php echo (int)$clearance_id; ?>">
@@ -694,7 +830,7 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
                         <tr>
                           <th>Unit</th>
                           <th style="width:150px;">Date</th>
-                          <th style="width:110px;"></th>
+                          <th style="width:170px;" class="text-end">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -703,13 +839,30 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
                             <td><?php echo h($u["unit_name"]); ?></td>
                             <td><?php echo h($u["clearance_date"] ?: "-"); ?></td>
                             <td class="text-end">
-                              <form method="post" class="d-inline">
-                                <input type="hidden" name="action" value="delete_unit_clearance">
-                                <input type="hidden" name="exit_id" value="<?php echo (int)$exit_id; ?>">
-                                <input type="hidden" name="unit_clearance_id" value="<?php echo (int)$u["unit_clearance_id"]; ?>">
-                                <button class="btn btn-sm btn-outline-danger"
-                                        onclick="return confirm('Delete this unit clearance?');">Delete</button>
-                              </form>
+                              <div class="d-flex justify-content-end gap-2">
+                                <button
+                                  type="button"
+                                  class="btn btn-sm btn-outline-primary open-edit-unit"
+                                  data-bs-toggle="modal"
+                                  data-bs-target="#unitModal"
+                                  data-exit_id="<?php echo h($exit_id); ?>"
+                                  data-unit_clearance_id="<?php echo h($u["unit_clearance_id"]); ?>"
+                                  data-unit_name="<?php echo h($u["unit_name"]); ?>"
+                                  data-clearance_date="<?php echo h($u["clearance_date"]); ?>"
+                                >Edit</button>
+
+                                <button
+                                  type="button"
+                                  class="btn btn-sm btn-outline-danger open-delete"
+                                  data-bs-toggle="modal"
+                                  data-bs-target="#deleteModal"
+                                  data-title="Delete Unit Clearance?"
+                                  data-body="Delete clearance for unit: <?php echo h($u["unit_name"]); ?>."
+                                  data-action="delete_unit_clearance"
+                                  data-exit_id="<?php echo h($exit_id); ?>"
+                                  data-unit_clearance_id="<?php echo h($u["unit_clearance_id"]); ?>"
+                                >Delete</button>
+                              </div>
                             </td>
                           </tr>
                         <?php endforeach; ?>
@@ -731,6 +884,7 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
               </div>
 
               <form method="post" class="row g-2 align-items-end mb-3">
+                <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
                 <input type="hidden" name="action" value="add_exit_visa_action">
                 <input type="hidden" name="exit_id" value="<?php echo (int)$exit_id; ?>">
 
@@ -766,7 +920,7 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
                         <th>Type</th>
                         <th style="width:140px;">Date</th>
                         <th>Remarks</th>
-                        <th style="width:110px;"></th>
+                        <th style="width:200px;" class="text-end">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -776,13 +930,31 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
                           <td><?php echo h($v["action_date"]); ?></td>
                           <td><?php echo h($v["remarks"] ?? "-"); ?></td>
                           <td class="text-end">
-                            <form method="post" class="d-inline">
-                              <input type="hidden" name="action" value="delete_exit_visa_action">
-                              <input type="hidden" name="exit_id" value="<?php echo (int)$exit_id; ?>">
-                              <input type="hidden" name="exit_visa_id" value="<?php echo (int)$v["exit_visa_id"]; ?>">
-                              <button class="btn btn-sm btn-outline-danger"
-                                      onclick="return confirm('Delete this visa action?');">Delete</button>
-                            </form>
+                            <div class="d-flex justify-content-end gap-2 flex-wrap">
+                              <button
+                                type="button"
+                                class="btn btn-sm btn-outline-primary open-edit-visa"
+                                data-bs-toggle="modal"
+                                data-bs-target="#visaModal"
+                                data-exit_id="<?php echo h($exit_id); ?>"
+                                data-exit_visa_id="<?php echo h($v["exit_visa_id"]); ?>"
+                                data-action_type="<?php echo h($v["action_type"]); ?>"
+                                data-action_date="<?php echo h($v["action_date"]); ?>"
+                                data-remarks="<?php echo h($v["remarks"]); ?>"
+                              >Edit</button>
+
+                              <button
+                                type="button"
+                                class="btn btn-sm btn-outline-danger open-delete"
+                                data-bs-toggle="modal"
+                                data-bs-target="#deleteModal"
+                                data-title="Delete Exit Visa Action?"
+                                data-body="Delete this exit visa action (<?php echo h($v["action_type"]); ?> on <?php echo h($v["action_date"]); ?>)."
+                                data-action="delete_exit_visa_action"
+                                data-exit_id="<?php echo h($exit_id); ?>"
+                                data-exit_visa_id="<?php echo h($v["exit_visa_id"]); ?>"
+                              >Delete</button>
+                            </div>
                           </td>
                         </tr>
                       <?php endforeach; ?>
@@ -801,5 +973,285 @@ $visaActionOptions  = ["Cancellation","Lapse","Transfer"];
   </div>
 
 </div>
+
+<!-- =========================
+     Exit Case Modal (Create/Edit)
+========================= -->
+<div class="modal fade" id="exitCaseModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" id="exitCaseForm">
+        <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
+        <input type="hidden" name="action" id="exit_action" value="create_exit_case">
+        <input type="hidden" name="exit_id" id="exit_id" value="0">
+
+        <div class="modal-header">
+          <h5 class="modal-title" id="exitModalTitle">Create Exit Case</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Student</label>
+              <select class="form-select" name="student_id" id="exit_student_id" required>
+                <option value="">-- Select student --</option>
+                <?php foreach ($students as $s): ?>
+                  <?php
+                    $sid = (int)$s['student_id'];
+                    $nm = trim(($s['first_name'] ?? '').' '.($s['last_name'] ?? ''));
+                    $label = $nm ? ($nm." (ID: $sid)") : ("Student $sid");
+                  ?>
+                  <option value="<?php echo h($sid); ?>"><?php echo h($label); ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-md-3">
+              <label class="form-label">Exit Type</label>
+              <select class="form-select" name="exit_type" id="exit_type" required>
+                <?php foreach ($exitTypeOptions as $opt): ?>
+                  <option value="<?php echo h($opt); ?>"><?php echo h($opt); ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-md-3">
+              <label class="form-label">Request Date</label>
+              <input type="date" class="form-control" name="request_date" id="request_date" required value="<?php echo h(date('Y-m-d')); ?>">
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label">Exit Status</label>
+              <select class="form-select" name="exit_status" id="exit_status" required>
+                <?php foreach ($exitStatusOptions as $opt): ?>
+                  <option value="<?php echo h($opt); ?>"><?php echo h($opt); ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-12">
+              <div class="text-muted small">
+                Tip: Use <b>Pending</b> for new cases; staff can update status later.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="exitSubmitBtn">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- =========================
+     Unit Clearance Modal (Edit)
+========================= -->
+<div class="modal fade" id="unitModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" id="unitForm">
+        <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
+        <input type="hidden" name="action" value="update_unit_clearance">
+        <input type="hidden" name="exit_id" id="unit_exit_id" value="0">
+        <input type="hidden" name="unit_clearance_id" id="unit_clearance_id" value="0">
+
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Unit Clearance</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-7">
+              <label class="form-label">Unit Name</label>
+              <input class="form-control" name="unit_name" id="unit_name" required>
+            </div>
+            <div class="col-5">
+              <label class="form-label">Clearance Date</label>
+              <input type="date" class="form-control" name="clearance_date" id="unit_clearance_date">
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- =========================
+     Exit Visa Modal (Edit)
+========================= -->
+<div class="modal fade" id="visaModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" id="visaForm">
+        <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
+        <input type="hidden" name="action" value="update_exit_visa_action">
+        <input type="hidden" name="exit_id" id="visa_exit_id" value="0">
+        <input type="hidden" name="exit_visa_id" id="exit_visa_id" value="0">
+
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Exit Visa Action</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Type</label>
+              <select class="form-select" name="action_type" id="visa_action_type" required>
+                <?php foreach ($visaActionOptions as $opt): ?>
+                  <option value="<?php echo h($opt); ?>"><?php echo h($opt); ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label">Date</label>
+              <input type="date" class="form-control" name="action_date" id="visa_action_date" required>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label">Remarks</label>
+              <input class="form-control" name="remarks" id="visa_remarks" placeholder="optional">
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- =========================
+     Delete Modal (Reusable)
+========================= -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" id="deleteForm">
+        <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
+        <input type="hidden" name="action" id="del_action" value="">
+        <input type="hidden" name="exit_id" id="del_exit_id" value="0">
+        <input type="hidden" name="unit_clearance_id" id="del_unit_clearance_id" value="0">
+        <input type="hidden" name="exit_visa_id" id="del_exit_visa_id" value="0">
+
+        <div class="modal-header">
+          <h5 class="modal-title" id="del_title">Confirm Delete</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+          <div id="del_body">Are you sure?</div>
+          <div class="text-danger small mt-2">This action cannot be undone.</div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-danger">Yes, Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Create Exit Case
+  const btnCreateExit = document.getElementById('btnCreateExit');
+  if (btnCreateExit) {
+    btnCreateExit.addEventListener('click', () => {
+      document.getElementById('exitModalTitle').textContent = 'Create Exit Case';
+      document.getElementById('exit_action').value = 'create_exit_case';
+      document.getElementById('exit_id').value = '0';
+      document.getElementById('exit_student_id').value = '';
+      document.getElementById('exit_type').value = 'Completion';
+      document.getElementById('request_date').value = new Date().toISOString().slice(0,10);
+      document.getElementById('exit_status').value = 'Pending';
+      document.getElementById('exitSubmitBtn').textContent = 'Create';
+    });
+  }
+
+  // Edit Exit Case
+  document.querySelectorAll('.open-edit-exit').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('exitModalTitle').textContent = 'Edit Exit Case';
+      document.getElementById('exit_action').value = 'update_exit_case';
+      document.getElementById('exit_id').value = btn.dataset.exit_id || '0';
+      document.getElementById('exit_student_id').value = btn.dataset.student_id || '';
+      document.getElementById('exit_type').value = btn.dataset.exit_type || 'Completion';
+      document.getElementById('request_date').value = btn.dataset.request_date || '';
+      document.getElementById('exit_status').value = btn.dataset.exit_status || 'Pending';
+      document.getElementById('exitSubmitBtn').textContent = 'Save Changes';
+    });
+  });
+
+  // Edit Unit Clearance
+  document.querySelectorAll('.open-edit-unit').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('unit_exit_id').value = btn.dataset.exit_id || '0';
+      document.getElementById('unit_clearance_id').value = btn.dataset.unit_clearance_id || '0';
+      document.getElementById('unit_name').value = btn.dataset.unit_name || '';
+      document.getElementById('unit_clearance_date').value = btn.dataset.clearance_date || '';
+    });
+  });
+
+  // Edit Visa Action
+  document.querySelectorAll('.open-edit-visa').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('visa_exit_id').value = btn.dataset.exit_id || '0';
+      document.getElementById('exit_visa_id').value = btn.dataset.exit_visa_id || '0';
+      document.getElementById('visa_action_type').value = btn.dataset.action_type || 'Cancellation';
+      document.getElementById('visa_action_date').value = btn.dataset.action_date || '';
+      document.getElementById('visa_remarks').value = btn.dataset.remarks || '';
+    });
+  });
+
+  // Delete Modal
+  const delTitle = document.getElementById('del_title');
+  const delBody  = document.getElementById('del_body');
+  const delAction = document.getElementById('del_action');
+  const delExitId = document.getElementById('del_exit_id');
+  const delUcId   = document.getElementById('del_unit_clearance_id');
+  const delVisaId = document.getElementById('del_exit_visa_id');
+
+  document.querySelectorAll('.open-delete').forEach(btn => {
+    btn.addEventListener('click', () => {
+      delTitle.textContent = btn.dataset.title || 'Confirm Delete';
+      delBody.textContent  = btn.dataset.body  || 'Are you sure?';
+
+      delAction.value = btn.dataset.action || '';
+
+      // reset
+      delExitId.value = '0';
+      delUcId.value   = '0';
+      delVisaId.value = '0';
+
+      // set known ids based on action
+      if (btn.dataset.exit_id) delExitId.value = btn.dataset.exit_id;
+
+      if (btn.dataset.action === 'delete_unit_clearance' && btn.dataset.unit_clearance_id) {
+        delUcId.value = btn.dataset.unit_clearance_id;
+      } else if (btn.dataset.action === 'delete_exit_visa_action' && btn.dataset.exit_visa_id) {
+        delVisaId.value = btn.dataset.exit_visa_id;
+      } else if (btn.dataset.action === 'delete_exit_case') {
+        // exit_id already set
+      }
+    });
+  });
+})();
+</script>
 
 <?php require_once __DIR__ . "/footer.php"; ?>

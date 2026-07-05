@@ -178,7 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $currentAppId = $app['application_id'] ?? null;
         }
 
-        // 2) Add document (student) - warn on duplicate document_type
+        // 2) Add document (student) - single upload (kept for backward compatibility)
         if ($action === 'add_document') {
             if (!$currentAppId) {
                 throw new Exception("No active application found. Submit a renewal first.");
@@ -245,7 +245,135 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $success = "Document uploaded successfully. Document ID: {$newDocId}";
         }
 
-        // 3) Update document (student) - warn if chosen type already exists on another document in same app
+        // 2B) Add MULTIPLE documents in one submit (student)
+        if ($action === 'add_documents_batch') {
+            if (!$currentAppId) {
+                throw new Exception("No active application found. Submit a renewal first.");
+            }
+
+            $types = $_POST['document_type'] ?? [];
+            if (!is_array($types)) $types = [];
+
+            if (!isset($_FILES['document_file'])) {
+                throw new Exception("Please choose files to upload.");
+            }
+
+            $files = $_FILES['document_file'];
+            $count = is_array($files['name'] ?? null) ? count($files['name']) : 0;
+
+            if ($count === 0) {
+                throw new Exception("Please add at least one document row.");
+            }
+
+            $uploadDir = __DIR__ . "/../uploads/visa_documents/";
+            ensureUploadDir($uploadDir);
+
+            $uploaded = 0;
+            $skipped = 0;
+            $errors = [];
+            $dupWarns = 0;
+
+            for ($i = 0; $i < $count; $i++) {
+                $document_type = trim($types[$i] ?? '');
+
+                $rowFileName = (string)($files['name'][$i] ?? '');
+                $rowTmp      = (string)($files['tmp_name'][$i] ?? '');
+
+                // If the row is completely empty, skip it
+                if ($document_type === '' && $rowFileName === '') {
+                    $skipped++;
+                    continue;
+                }
+
+                if ($document_type === '' || !in_array($document_type, $DOCUMENT_TYPES, true)) {
+                    $errors[] = "Row " . ($i + 1) . ": Invalid document type.";
+                    continue;
+                }
+
+                $file = [
+                    'name'     => $files['name'][$i] ?? '',
+                    'type'     => $files['type'][$i] ?? '',
+                    'tmp_name' => $files['tmp_name'][$i] ?? '',
+                    'error'    => $files['error'][$i] ?? UPLOAD_ERR_NO_FILE,
+                    'size'     => $files['size'][$i] ?? 0,
+                ];
+
+                // Duplicate type check (warning only)
+                $stmt = $conn->prepare("
+                    SELECT COUNT(*) AS c
+                    FROM visa_document
+                    WHERE application_id = ?
+                      AND document_type = ?
+                    LIMIT 1
+                ");
+                $stmt->bind_param("is", $currentAppId, $document_type);
+                $stmt->execute();
+                $cntRow = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if ((int)($cntRow['c'] ?? 0) > 0) {
+                    $dupWarns++;
+                }
+
+                $fullPath = ''; // for cleanup if DB fails
+                try {
+                    validateUpload($file);
+
+                    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+                    $safeName = "doc_{$student_id}_" . time() . "_" . bin2hex(random_bytes(6)) . "." . $ext;
+                    $fullPath = $uploadDir . $safeName;
+
+                    if (!move_uploaded_file($file['tmp_name'], $fullPath)) {
+                        throw new Exception("Row " . ($i + 1) . ": Failed to upload file.");
+                    }
+
+                    $dbPath = "../uploads/visa_documents/" . $safeName;
+
+                    $stmt = $conn->prepare("CALL sp_student_add_visa_document(?, ?, ?, ?, @o_doc_id)");
+                    $stmt->bind_param("iiss", $student_id, $currentAppId, $document_type, $dbPath);
+                    $stmt->execute();
+                    $stmt->close();
+                    clearStoredResults($conn);
+
+                    $res = $conn->query("SELECT @o_doc_id AS document_id");
+                    $row = $res ? $res->fetch_assoc() : null;
+                    $newDocId = (int)($row['document_id'] ?? 0);
+                    if ($res) $res->free();
+
+                    if ($newDocId <= 0) {
+                        throw new Exception("Row " . ($i + 1) . ": Uploaded, but DB did not return document id.");
+                    }
+
+                    $uploaded++;
+
+                } catch (Throwable $ex) {
+                    // If file moved but DB failed, delete file (best effort)
+                    if ($fullPath !== '' && is_file($fullPath)) {
+                        @unlink($fullPath);
+                    }
+                    $errors[] = $ex->getMessage();
+                    clearStoredResults($conn);
+                }
+            }
+
+            if ($uploaded > 0) {
+                $success = "Uploaded {$uploaded} document(s) successfully.";
+            }
+
+            if ($skipped > 0) {
+                $warning .= ($warning ? "<br>" : "") . "Skipped {$skipped} empty row(s).";
+            }
+
+            if ($dupWarns > 0) {
+                $warning .= ($warning ? "<br>" : "") .
+                    "⚠️ {$dupWarns} row(s) have document type(s) that were already uploaded before (allowed). If you meant to replace, use Edit on existing document.";
+            }
+
+            if (!empty($errors)) {
+                $error = "Some rows failed:<br>- " . implode("<br>- ", array_map('h', $errors));
+            }
+        }
+
+        // 3) Update document (student)
         if ($action === 'update_document') {
             $document_id = (int)($_POST['document_id'] ?? 0);
             $document_type = trim($_POST['document_type'] ?? '');
@@ -521,7 +649,7 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
     <?php endif; ?>
 
     <?php if ($error): ?>
-        <div class="alert alert-danger"><?php echo h($error); ?></div>
+        <div class="alert alert-danger"><?php echo $error; ?></div>
     <?php endif; ?>
 
     <!-- Current Visa -->
@@ -718,37 +846,114 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                 <div class="text-muted">Submit a visa renewal application first to upload documents.</div>
             <?php else: ?>
 
-                <!-- Add Document -->
+                <!-- Add Multiple Documents (Table) -->
                 <div class="border rounded p-3 mb-4">
-                    <h6 class="mb-3">Upload New Document</h6>
-                    <form method="post" enctype="multipart/form-data" class="row g-3">
-                        <input type="hidden" name="action" value="add_document">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h6 class="mb-0">Upload Supporting Documents (Multiple)</h6>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="addRowBtn">
+                            <i class="bi bi-plus-circle"></i> Add Row
+                        </button>
+                    </div>
 
-                        <div class="col-md-5">
-                            <label class="form-label">Document Type</label>
-                            <select name="document_type" class="form-select" required>
-                                <option value="">-- Select Document Type --</option>
-                                <?php foreach ($DOCUMENT_TYPES as $type): ?>
-                                    <option value="<?php echo h($type); ?>">
-                                        <?php echo h($type); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+                    <form method="post" enctype="multipart/form-data" id="multiUploadForm">
+                        <input type="hidden" name="action" value="add_documents_batch">
+
+                        <div class="table-responsive">
+                            <table class="table table-bordered align-middle mb-2" id="docsTable">
+                                <thead class="table-light">
+                                <tr>
+                                    <th style="width: 45%;">Document Type</th>
+                                    <th style="width: 45%;">File</th>
+                                    <th style="width: 10%;">Remove</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                <tr>
+                                    <td>
+                                        <select name="document_type[]" class="form-select" required>
+                                            <option value="">-- Select Document Type --</option>
+                                            <?php foreach ($DOCUMENT_TYPES as $type): ?>
+                                                <option value="<?php echo h($type); ?>"><?php echo h($type); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <input type="file" name="document_file[]" class="form-control" required>
+                                        <div class="form-text">Allowed: PDF/JPG/PNG, max 5MB each.</div>
+                                    </td>
+                                    <td class="text-center">
+                                        <button type="button" class="btn btn-sm btn-outline-danger removeRowBtn" disabled>
+                                            <i class="bi bi-x-lg"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                </tbody>
+                            </table>
                         </div>
 
-                        <div class="col-md-5">
-                            <label class="form-label">Choose File</label>
-                            <input type="file" name="document_file" class="form-control" required>
-                            <div class="form-text">Allowed: PDF/JPG/PNG, max 5MB.</div>
-                        </div>
-
-                        <div class="col-md-2 d-flex align-items-end">
-                            <button class="btn btn-success w-100">
-                                <i class="bi bi-upload"></i> Upload
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-success">
+                                <i class="bi bi-upload"></i> Upload All
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="clearRowsBtn">
+                                Clear
                             </button>
                         </div>
                     </form>
                 </div>
+
+                <script>
+                (function () {
+                    const tableBody = document.querySelector("#docsTable tbody");
+                    const addRowBtn = document.getElementById("addRowBtn");
+                    const clearRowsBtn = document.getElementById("clearRowsBtn");
+
+                    function updateRemoveButtons() {
+                        const removeBtns = tableBody.querySelectorAll(".removeRowBtn");
+                        removeBtns.forEach((btn) => {
+                            btn.disabled = (tableBody.rows.length === 1); // keep at least 1 row
+                        });
+                    }
+
+                    addRowBtn.addEventListener("click", () => {
+                        const firstRow = tableBody.rows[0];
+                        const newRow = firstRow.cloneNode(true);
+
+                        // reset values
+                        newRow.querySelector('select[name="document_type[]"]').value = "";
+                        newRow.querySelector('input[name="document_file[]"]').value = "";
+
+                        // enable remove button
+                        const removeBtn = newRow.querySelector(".removeRowBtn");
+                        removeBtn.disabled = false;
+
+                        tableBody.appendChild(newRow);
+                        updateRemoveButtons();
+                    });
+
+                    tableBody.addEventListener("click", (e) => {
+                        const btn = e.target.closest(".removeRowBtn");
+                        if (!btn) return;
+
+                        if (tableBody.rows.length > 1) {
+                            btn.closest("tr").remove();
+                            updateRemoveButtons();
+                        }
+                    });
+
+                    clearRowsBtn.addEventListener("click", () => {
+                        // keep only one row
+                        while (tableBody.rows.length > 1) tableBody.deleteRow(1);
+
+                        // reset first row
+                        tableBody.rows[0].querySelector('select[name="document_type[]"]').value = "";
+                        tableBody.rows[0].querySelector('input[name="document_file[]"]').value = "";
+                        updateRemoveButtons();
+                    });
+
+                    updateRemoveButtons();
+                })();
+                </script>
 
                 <!-- List Documents -->
                 <?php if (!$documents): ?>

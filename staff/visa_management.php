@@ -1,16 +1,18 @@
 <?php
 // staff/visa_management.php
-// Visa Records Management (Staff)
+// Visa Records Management (Staff) + Staff can create Visa Renewal Applications on behalf of students
 //
 // Tables used:
 // - student_visa (create/update visa records)
 // - student (student reference)
 // - program (optional display)
 // - school (optional display)
+// - visa_renewal_application (create renewal applications on behalf)
+// - visa_renewal_status (optional timeline entry)
 //
 // Procedures:
-// - Recommended: sp_staff_upsert_student_visa (AVAILABLE in your DB)
-//   This procedure automatically sets visa status Active/Expired based on expiry_date.
+// - sp_staff_upsert_student_visa (OPTIONAL)
+// - sp_staff_add_visa_renewal_status (OPTIONAL)
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
@@ -60,12 +62,68 @@ function clearStoredResults(mysqli $conn): void {
 }
 
 // ------------------------------------------------------------
+// CSRF
+// ------------------------------------------------------------
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
+}
+$csrf_token = $_SESSION['csrf_token'];
+
+// ------------------------------------------------------------
 // POST actions BEFORE output
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = trim($_POST['action'] ?? '');
 
     try {
+        // ============================================================
+        // A) STAFF: CREATE VISA RENEWAL APPLICATION (ON BEHALF OF STUDENT)
+        // ============================================================
+        if ($action === 'staff_create_visa_renewal') {
+            $student_id = (int)($_POST['renew_student_id'] ?? 0);
+            $requested_months = (int)($_POST['requested_months'] ?? 0);
+            $status = trim($_POST['renew_status'] ?? 'Pending');
+            $remarks = trim($_POST['renew_remarks'] ?? '');
+
+            $allowedStatus = ['Pending', 'Submitted passport to ISSU', 'Passport collected'];
+            if ($student_id <= 0) throw new RuntimeException("Student is required.");
+            if ($requested_months <= 0) throw new RuntimeException("Requested months must be greater than 0.");
+            if (!in_array($status, $allowedStatus, true)) throw new RuntimeException("Invalid renewal status.");
+
+            $stmt = $conn->prepare("
+                INSERT INTO visa_renewal_application (student_id, submission_date, requested_months, status)
+                VALUES (?, NOW(), ?, ?)
+            ");
+            if (!$stmt) throw new RuntimeException("Prepare failed: " . $conn->error);
+            $stmt->bind_param("iis", $student_id, $requested_months, $status);
+            if (!$stmt->execute()) throw new RuntimeException("Insert failed: " . $stmt->error);
+
+            $newAppId = (int)$conn->insert_id;
+            $stmt->close();
+
+            // Timeline entry (optional)
+            clearStoredResults($conn);
+            $stage = "Created by staff";
+            $fullRemarks = $remarks !== ""
+                ? $remarks
+                : ("Created by staff (User ID: " . (int)($_SESSION['user_id'] ?? 0) . ").");
+
+            $stmt = $conn->prepare("CALL sp_staff_add_visa_renewal_status(?, ?, ?, @o_status_id)");
+            if ($stmt) {
+                $stmt->bind_param("iss", $newAppId, $stage, $fullRemarks);
+                $stmt->execute();
+                $stmt->close();
+                clearStoredResults($conn);
+            } else {
+                clearStoredResults($conn);
+            }
+
+            redirectTo("visa_management.php?msg=" . urlencode("Visa renewal application created (App ID: $newAppId)."));
+        }
+
+        // ============================================================
+        // B) VISA RECORD UPSERT
+        // ============================================================
         if ($action === 'upsert_visa') {
             $visa_id     = (int)($_POST['visa_id'] ?? 0);     // update only
             $student_id  = (int)($_POST['student_id'] ?? 0);
@@ -80,14 +138,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($issue_date === '' || $expiry_date === '') throw new RuntimeException("Issue date and expiry date are required.");
 
             if ($visa_id > 0) {
-                // Update via procedure
-                clearStoredResults($conn);
-                $stmt = $conn->prepare("CALL sp_staff_upsert_student_visa(?, ?, ?, ?, ?, ?)");
+                // ✅ Update existing record ONLY
+                $today = strtotime(date('Y-m-d 00:00:00'));
+                $exp   = strtotime($expiry_date . ' 00:00:00');
+                $newStatus = ($exp < $today) ? 'Expired' : 'Active';
+
+                $stmt = $conn->prepare("
+                    UPDATE student_visa
+                    SET student_id = ?, visa_type = ?, issue_date = ?, expiry_date = ?, status = ?, passport_no = ?
+                    WHERE visa_id = ?
+                    LIMIT 1
+                ");
                 if (!$stmt) throw new RuntimeException("Prepare failed: " . $conn->error);
-                $stmt->bind_param("iissss", $visa_id, $student_id, $visa_type, $issue_date, $expiry_date, $passport_no);
-                if (!$stmt->execute()) throw new RuntimeException("Execute failed: " . $stmt->error);
+
+                $stmt->bind_param("isssssi", $student_id, $visa_type, $issue_date, $expiry_date, $newStatus, $passport_no, $visa_id);
+
+                if (!$stmt->execute()) throw new RuntimeException("Update failed: " . $stmt->error);
+
                 $stmt->close();
-                clearStoredResults($conn);
 
                 redirectTo("visa_management.php?msg=" . urlencode("Visa record updated.") . "&edit=" . $visa_id);
             } else {
@@ -109,15 +177,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 redirectTo("visa_management.php?msg=" . urlencode("Visa record created.") . "&edit=" . $newVisaId);
             }
+        }
 
-        } elseif ($action === 'bulk_delete') {
+        // ============================================================
+        // C) BULK DELETE (now from Modal confirm)
+        // ============================================================
+        if ($action === 'bulk_delete') {
+            $postedToken = $_POST['csrf_token'] ?? '';
+            if (!$postedToken || !hash_equals($_SESSION['csrf_token'] ?? '', $postedToken)) {
+                throw new RuntimeException("Invalid request (CSRF). Please try again.");
+            }
 
             $ids = $_POST['delete_ids'] ?? [];
             if (!is_array($ids) || count($ids) === 0) {
                 throw new RuntimeException("Please select at least one record to delete.");
             }
 
-            // Keep only positive ints
             $ids = array_values(array_filter(array_map('intval', $ids), fn($v) => $v > 0));
             if (!$ids) throw new RuntimeException("Invalid selection.");
 
@@ -135,10 +210,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
 
             redirectTo("visa_management.php?msg=" . urlencode("Deleted $deleted visa record(s)."));
-
-        } else {
-            throw new RuntimeException("Unknown action.");
         }
+
+        throw new RuntimeException("Unknown action.");
 
     } catch (Throwable $e) {
         redirectTo("visa_management.php?error=" . urlencode($e->getMessage()));
@@ -299,7 +373,7 @@ try {
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
       <h3 class="mb-0">Visa Records Management</h3>
-      <div class="text-muted">Create and update student visa records</div>
+      <div class="text-muted">Create and update student visa records + create renewal applications on behalf</div>
     </div>
 
     <div>
@@ -318,8 +392,63 @@ try {
   <?php endif; ?>
 
   <div class="row g-3">
-    <!-- Form -->
+    <!-- Left Column -->
     <div class="col-lg-4">
+
+      <!-- STAFF Create Renewal -->
+      <div class="card shadow-sm mb-3">
+        <div class="card-header bg-white">
+          <strong>Create Visa Renewal (On Behalf of Student)</strong>
+        </div>
+        <div class="card-body">
+          <form method="post" class="row g-2">
+            <input type="hidden" name="action" value="staff_create_visa_renewal">
+
+            <div class="col-12">
+              <label class="form-label">Student</label>
+              <select class="form-select" name="renew_student_id" required>
+                <option value="">-- Select student --</option>
+                <?php foreach ($students as $s): ?>
+                  <?php
+                    $sid = (int)$s['student_id'];
+                    $nm = trim(($s['first_name'] ?? '').' '.($s['last_name'] ?? ''));
+                    $label = $nm ? ($nm . " (ID: $sid)") : ("Student $sid");
+                  ?>
+                  <option value="<?php echo $sid; ?>"><?php echo h($label); ?></option>
+                <?php endforeach; ?>
+              </select>
+              <div class="form-text">This creates a new renewal application record (multiple allowed).</div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Requested Months</label>
+              <input type="number" min="1" max="60" class="form-control" name="requested_months" required placeholder="e.g., 12">
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Initial Status</label>
+              <select class="form-select" name="renew_status" required>
+                <option value="Pending" selected>Pending</option>
+                <option value="Submitted passport to ISSU">Submitted passport to ISSU</option>
+                <option value="Passport collected">Passport collected</option>
+              </select>
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">Remarks (optional)</label>
+              <input class="form-control" name="renew_remarks" placeholder="e.g., Student came to ISSU, staff submitted on behalf">
+            </div>
+
+            <div class="col-12 d-grid mt-2">
+              <button class="btn btn-success">
+                <i class="bi bi-plus-circle"></i> Create Renewal Application
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Visa Create/Edit -->
       <div class="card shadow-sm mb-3">
         <div class="card-header bg-white">
           <strong><?php echo $editRow ? "Edit Visa Record" : "Create Visa Record"; ?></strong>
@@ -337,8 +466,8 @@ try {
                 <?php foreach ($students as $s): ?>
                   <?php
                     $sid = (int)$s['student_id'];
-                    $name = trim(($s['first_name'] ?? '').' '.($s['last_name'] ?? ''));
-                    $label = $name ? ($name . " (ID: $sid)") : ("Student $sid");
+                    $nm = trim(($s['first_name'] ?? '').' '.($s['last_name'] ?? ''));
+                    $label = $nm ? ($nm . " (ID: $sid)") : ("Student $sid");
                     $selected = ((int)($editRow['student_id'] ?? 0) === $sid) ? "selected" : "";
                   ?>
                   <option value="<?php echo $sid; ?>" <?php echo $selected; ?>>
@@ -398,30 +527,9 @@ try {
         </div>
       </div>
 
-      <?php if ($editRow): ?>
-        <div class="card shadow-sm">
-          <div class="card-header bg-white"><strong>Selected Record Info</strong></div>
-          <div class="card-body">
-            <div class="text-muted small">Student</div>
-            <div class="fw-semibold">
-              <?php echo h(trim(($editRow['first_name'] ?? '').' '.($editRow['last_name'] ?? ''))); ?>
-            </div>
-            <div class="text-muted small">Email: <?php echo h($editRow['email'] ?? '-'); ?></div>
-            <div class="text-muted small">
-              <?php if (!empty($editRow['program_name'])): ?>
-                Program: <?php echo h($editRow['program_name']); ?>
-              <?php endif; ?>
-              <?php if (!empty($editRow['school_name'])): ?>
-                | School: <?php echo h($editRow['school_name']); ?>
-              <?php endif; ?>
-            </div>
-          </div>
-        </div>
-      <?php endif; ?>
-
     </div>
 
-    <!-- List -->
+    <!-- Right Column: List -->
     <div class="col-lg-8">
       <div class="card shadow-sm mb-3">
         <div class="card-header bg-white"><strong>Filters</strong></div>
@@ -471,12 +579,17 @@ try {
             <div class="p-4 text-muted">No visa records found.</div>
           <?php else: ?>
 
-            <form method="post" onsubmit="return confirm('Are you sure you want to delete the selected visa record(s)?');">
+            <!-- BULK DELETE FORM (confirmed via modal, no JS confirm) -->
+            <form method="post" id="bulkDeleteForm">
               <input type="hidden" name="action" value="bulk_delete">
+              <input type="hidden" name="csrf_token" value="<?php echo h($csrf_token); ?>">
 
               <div class="d-flex justify-content-between align-items-center p-3 border-bottom bg-white">
                 <div class="text-muted small">Select records and click delete.</div>
-                <button type="submit" class="btn btn-danger btn-sm" id="bulkDeleteBtn" disabled>
+
+                <!-- Button opens modal instead of submitting immediately -->
+                <button type="button" class="btn btn-danger btn-sm" id="openBulkDeleteModalBtn" disabled
+                        data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
                   Delete Selected
                 </button>
               </div>
@@ -567,36 +680,68 @@ try {
 
 </div>
 
+<!-- Bulk Delete Modal -->
+<div class="modal fade" id="bulkDeleteModal" tabindex="-1" aria-labelledby="bulkDeleteModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+
+      <div class="modal-header">
+        <h5 class="modal-title" id="bulkDeleteModalLabel">Confirm Delete</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="mb-2">Are you sure you want to delete the selected visa record(s)?</div>
+        <div class="text-danger small">This action cannot be undone.</div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmBulkDeleteBtn">Yes, Delete</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
 <script>
   (function () {
     const selectAll = document.getElementById('selectAll');
-    const btn = document.getElementById('bulkDeleteBtn');
+    const openBtn = document.getElementById('openBulkDeleteModalBtn');
+    const confirmBtn = document.getElementById('confirmBulkDeleteBtn');
+    const form = document.getElementById('bulkDeleteForm');
 
-    function allChecks() {
+    function checks() {
       return Array.from(document.querySelectorAll('.row-check'));
     }
 
     function updateButton() {
-      const anyChecked = allChecks().some(c => c.checked);
-      if (btn) btn.disabled = !anyChecked;
+      const anyChecked = checks().some(c => c.checked);
+      if (openBtn) openBtn.disabled = !anyChecked;
     }
 
     if (selectAll) {
       selectAll.addEventListener('change', function () {
-        allChecks().forEach(c => c.checked = selectAll.checked);
+        checks().forEach(c => c.checked = selectAll.checked);
         updateButton();
       });
     }
 
     document.addEventListener('change', function (e) {
       if (e.target && e.target.classList.contains('row-check')) {
-        const list = allChecks();
+        const list = checks();
         const allChecked = list.length > 0 && list.every(c => c.checked);
         const anyChecked = list.some(c => c.checked);
         if (selectAll) selectAll.checked = allChecked;
-        if (btn) btn.disabled = !anyChecked;
+        if (openBtn) openBtn.disabled = !anyChecked;
       }
     });
+
+    if (confirmBtn && form) {
+      confirmBtn.addEventListener('click', function () {
+        form.submit();
+      });
+    }
 
     updateButton();
   })();
