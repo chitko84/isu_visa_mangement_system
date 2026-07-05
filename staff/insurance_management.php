@@ -106,6 +106,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException("Invalid claim status.");
             }
 
+            $studentForClaim = 0;
+            $lookup = $conn->prepare("SELECT ip.student_id FROM insurance_claim ic JOIN insurance_policy ip ON ip.policy_id = ic.policy_id WHERE ic.claim_id = ? LIMIT 1");
+            if ($lookup) {
+                $lookup->bind_param("i", $claim_id);
+                $lookup->execute();
+                $studentForClaim = (int)($lookup->get_result()->fetch_assoc()['student_id'] ?? 0);
+                $lookup->close();
+            }
+
             // Try procedure, fallback to direct update
             clearStoredResults($conn);
             $stmt = $conn->prepare("CALL sp_staff_update_claim_status(?, ?)");
@@ -124,6 +133,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $msg = "Claim status updated.";
+            if ($studentForClaim > 0) {
+                create_notification($conn, [
+                    'student_id' => $studentForClaim,
+                    'title' => 'Insurance claim status updated',
+                    'message' => "Your insurance claim #{$claim_id} was updated to {$new_status}.",
+                    'type' => 'insurance_claim_status',
+                ]);
+            }
+            log_audit($conn, 'updated_insurance_claim_status', 'insurance_claim', $claim_id, "Claim status changed to {$new_status}.");
         }
 
         // -------------------------------
@@ -136,6 +154,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($renewal_id <= 0) throw new RuntimeException("Invalid renewal id.");
             if (!in_array($new_status, ['Pending','Approved','Rejected'], true)) {
                 throw new RuntimeException("Invalid renewal status.");
+            }
+
+            $studentForRenewal = 0;
+            $lookup = $conn->prepare("SELECT ip.student_id FROM insurance_renewal_record irr JOIN insurance_policy ip ON ip.policy_id = irr.policy_id WHERE irr.renewal_id = ? LIMIT 1");
+            if ($lookup) {
+                $lookup->bind_param("i", $renewal_id);
+                $lookup->execute();
+                $studentForRenewal = (int)($lookup->get_result()->fetch_assoc()['student_id'] ?? 0);
+                $lookup->close();
             }
 
             // Try procedure, fallback to direct update + (optional) update policy end_date if Approved
@@ -172,6 +199,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $msg = "Renewal status updated.";
+            if ($studentForRenewal > 0) {
+                create_notification($conn, [
+                    'student_id' => $studentForRenewal,
+                    'title' => 'Insurance renewal status updated',
+                    'message' => "Your insurance renewal #{$renewal_id} was updated to {$new_status}.",
+                    'type' => 'insurance_renewal_status',
+                ]);
+            }
+            log_audit($conn, 'updated_insurance_renewal_status', 'insurance_renewal_record', $renewal_id, "Renewal status changed to {$new_status}.");
         }
 
         // -------------------------------

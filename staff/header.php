@@ -459,6 +459,15 @@ $profilePhotoUrlWithVersion = $profilePhotoUrl . '?v=' . time();
                 </a>
             </li>
 
+            <?php if (user_has_role(['admin', 'super_admin'])): ?>
+            <li class="nav-item">
+                <a href="audit_logs.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) === 'audit_logs.php' ? 'active' : ''; ?>">
+                    <i class="bi bi-shield-lock"></i>
+                    <span>Audit Logs</span>
+                </a>
+            </li>
+            <?php endif; ?>
+
             <li class="nav-item">
                 <a href="notifications.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) === 'notifications.php' ? 'active' : ''; ?>">
                     <i class="bi bi-bell"></i>

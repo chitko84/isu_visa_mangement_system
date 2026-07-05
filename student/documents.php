@@ -67,6 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     try {
+        require_csrf();
         // ---------------------------
         // Add document
         // ---------------------------
@@ -132,6 +133,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $success = "Document uploaded successfully (ID: {$newDocId}).";
+            create_notification($conn, [
+                'student_id' => $student_id,
+                'title' => 'Document uploaded',
+                'message' => "Your {$document_type} document was uploaded successfully.",
+                'type' => 'document_upload',
+            ]);
+            notify_staff($conn, 'Student uploaded document', "Student {$student_id} uploaded {$document_type} for application {$currentAppId}.", 'document_upload');
         }
 
         // ---------------------------
@@ -207,6 +215,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             clearStoredResults($conn);
 
             $success = "Document updated successfully.";
+            log_audit($conn, 'student_updated_document', 'visa_document', $document_id, 'Student updated visa document.');
         }
 
         // ---------------------------
@@ -226,6 +235,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             clearStoredResults($conn);
 
             $success = "Document deleted successfully.";
+            log_audit($conn, 'student_deleted_document', 'visa_document', $document_id, 'Student deleted visa document.');
         }
 
     } catch (Throwable $e) {
@@ -317,6 +327,7 @@ if ($currentAppId) {
                 <div class="text-muted">You need an application first before you can upload documents.</div>
             <?php else: ?>
                 <form method="post" enctype="multipart/form-data" class="row g-3">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="add_document">
 
                     <div class="col-md-5">
@@ -368,7 +379,7 @@ if ($currentAppId) {
                                     <td class="fw-semibold"><?php echo h($d['document_type']); ?></td>
                                     <td>
                                         <?php if (!empty($d['document_path'])): ?>
-                                            <a href="<?php echo h($d['document_path']); ?>" target="_blank">View</a>
+                                            <a href="../download.php?id=<?php echo (int)$d['document_id']; ?>" target="_blank" rel="noopener">View</a>
                                         <?php else: ?>
                                             <span class="text-muted">-</span>
                                         <?php endif; ?>
@@ -384,6 +395,7 @@ if ($currentAppId) {
 
                                         <!-- Delete -->
                                         <form method="post" class="d-inline" onsubmit="return confirm('Delete this document?');">
+                                            <?php echo csrf_field(); ?>
                                             <input type="hidden" name="action" value="delete_document">
                                             <input type="hidden" name="document_id" value="<?php echo (int)$d['document_id']; ?>">
                                             <button class="btn btn-sm btn-outline-danger" type="submit">
@@ -395,6 +407,7 @@ if ($currentAppId) {
                                         <div class="collapse mt-2" id="editDoc<?php echo (int)$d['document_id']; ?>">
                                             <div class="border rounded p-2">
                                                 <form method="post" enctype="multipart/form-data" class="row g-2">
+                                                    <?php echo csrf_field(); ?>
                                                     <input type="hidden" name="action" value="update_document">
                                                     <input type="hidden" name="document_id" value="<?php echo (int)$d['document_id']; ?>">
 

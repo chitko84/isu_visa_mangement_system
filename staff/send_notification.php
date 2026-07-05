@@ -45,6 +45,12 @@ try {
 // Tables used: notifications (insert), student (select recipients)
 // ------------------------------------------------------------
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    try {
+        require_csrf();
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+    }
+
     $title   = trim($_POST["title"] ?? "");
     $message = trim($_POST["message"] ?? "");
     $target  = $_POST["target"] ?? "all"; // all | by_program | by_school | by_students
@@ -55,7 +61,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $student_ids = $_POST["student_ids"] ?? [];
     if (!is_array($student_ids)) $student_ids = [];
 
-    if ($title === "" || $message === "") {
+    if ($error !== "") {
+        // CSRF error already set.
+    } elseif ($title === "" || $message === "") {
         $error = "Title and message are required.";
     } else {
         try {
@@ -89,8 +97,12 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
             } elseif ($target === "by_school") {
                 if ($school_id <= 0) throw new Exception("Please select a school.");
-                // If student table doesn't have school_id directly, you need a JOIN via program table
-                $stmt = $conn->prepare("SELECT student_id FROM student WHERE school_id = ?");
+                $stmt = $conn->prepare("
+                    SELECT s.student_id
+                    FROM student s
+                    JOIN program p ON p.program_id = s.program_id
+                    WHERE p.school_id = ?
+                ");
                 $stmt->bind_param("i", $school_id);
                 $stmt->execute();
                 $res = $stmt->get_result();
@@ -118,23 +130,22 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 throw new Exception("No recipients found for this selection.");
             }
 
-            // 2) Insert notifications (MATCHES YOUR TABLE)
-            // Columns you have: student_id, title, message, is_read (default 0), created_at (auto)
+            // 2) Insert notifications
             $conn->begin_transaction();
 
-            $sql = "INSERT INTO notifications (student_id, title, message, is_read)
-                    VALUES (?, ?, ?, 0)";
-            $stmt = $conn->prepare($sql);
-
             foreach ($recipients as $sid) {
-                $stmt->bind_param("iss", $sid, $title, $message);
-                if (!$stmt->execute()) {
-                    throw new Exception("Insert failed for student_id {$sid}: " . $stmt->error);
+                if (!create_notification($conn, [
+                    'student_id' => $sid,
+                    'title' => $title,
+                    'message' => $message,
+                    'type' => 'staff_message',
+                ])) {
+                    throw new Exception("Insert failed for student_id {$sid}.");
                 }
             }
 
-            $stmt->close();
             $conn->commit();
+            log_audit($conn, 'sent_notifications', 'notifications', null, 'Sent notification to ' . count($recipients) . ' student(s).');
 
             $success = "Notification sent to " . count($recipients) . " student(s).";
 
@@ -189,6 +200,7 @@ try {
         </div>
         <div class="card-body">
             <form method="post" id="sendForm" class="row g-3">
+                <?php echo csrf_field(); ?>
 
                 <div class="col-12">
                     <label class="form-label">Title *</label>

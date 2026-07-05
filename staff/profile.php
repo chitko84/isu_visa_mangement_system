@@ -38,6 +38,7 @@ if (!is_dir($uploadDirAbs)) {
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_cropped_profile_photo') {
     try {
+        require_csrf();
         $img = trim($_POST['cropped_image'] ?? '');
         if ($img === '') {
             throw new Exception("No cropped image received.");
@@ -96,6 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         $stmt->close();
 
         $success = "Profile picture updated successfully.";
+        log_audit($conn, 'staff_updated_profile_photo', 'staff', $staff_id, 'Staff updated profile photo.');
 
     } catch (Throwable $e) {
         $error = $e->getMessage();
@@ -229,6 +231,7 @@ if ($profilePhoto) {
                            accept="image/png,image/jpeg,image/webp">
 
                     <form method="post" id="saveCroppedForm" class="mt-3">
+                        <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="save_cropped_profile_photo">
                         <input type="hidden" name="cropped_image" id="cropped_image">
                         <button type="button" id="openEditorBtn" class="btn btn-primary w-100" disabled>

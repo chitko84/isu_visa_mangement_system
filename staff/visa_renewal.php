@@ -67,6 +67,15 @@ function safeDocUrl(string $path): string {
     return "../" . $p;
 }
 
+function studentIdForApplication(mysqli $conn, int $application_id): int {
+    $stmt = $conn->prepare("SELECT student_id FROM visa_renewal_application WHERE application_id = ? LIMIT 1");
+    $stmt->bind_param("i", $application_id);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (int)($row['student_id'] ?? 0);
+}
+
 // ------------------------------------------------------------
 // CSRF
 // ------------------------------------------------------------
@@ -112,6 +121,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $application_id = (int)($_POST['application_id'] ?? 0);
             if ($application_id <= 0) throw new RuntimeException("Invalid application id.");
 
+            $deletedStudentId = studentIdForApplication($conn, $application_id);
+
             // Delete child rows first (safe if your DB does NOT have ON DELETE CASCADE)
             // If you DO have cascade, these deletes are still fine.
             $conn->begin_transaction();
@@ -144,6 +155,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
 
             $conn->commit();
+            log_audit($conn, 'deleted_visa_renewal_application', 'visa_renewal_application', $application_id, 'Deleted visa renewal application and related records.');
+            if ($deletedStudentId > 0) {
+                create_notification($conn, [
+                    'student_id' => $deletedStudentId,
+                    'title' => 'Visa renewal application removed',
+                    'message' => "Visa renewal application #{$application_id} was removed by staff.",
+                    'type' => 'visa_application_deleted',
+                ]);
+            }
 
             redirectTo("visa_renewal.php?msg=" . urlencode("Application deleted successfully."));
 
@@ -165,6 +185,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$stmt->execute()) throw new RuntimeException("Execute failed: " . $stmt->error);
             $stmt->close();
             clearStoredResults($conn);
+            $sid = studentIdForApplication($conn, $application_id);
+            if ($sid > 0) {
+                create_notification($conn, [
+                    'student_id' => $sid,
+                    'title' => 'Visa renewal status updated',
+                    'message' => "Your visa renewal application #{$application_id} was updated to {$new_status}.",
+                    'type' => 'visa_status_update',
+                ]);
+            }
+            log_audit($conn, 'updated_visa_renewal_status', 'visa_renewal_application', $application_id, "Status changed to {$new_status}.");
 
             redirectTo("visa_renewal.php?msg=" . urlencode("Application status updated.") . "&view=" . $application_id);
 
@@ -187,6 +217,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$stmt->execute()) throw new RuntimeException("Execute failed: " . $stmt->error);
             $stmt->close();
             clearStoredResults($conn);
+            $sid = studentIdForApplication($conn, $application_id);
+            if ($sid > 0) {
+                create_notification($conn, [
+                    'student_id' => $sid,
+                    'title' => 'Visa renewal timeline updated',
+                    'message' => "A new visa renewal stage was added: {$stage_name}.",
+                    'type' => 'visa_stage_update',
+                ]);
+            }
+            log_audit($conn, 'added_visa_renewal_stage', 'visa_renewal_application', $application_id, "Stage added: {$stage_name}.");
 
             redirectTo("visa_renewal.php?msg=" . urlencode("Timeline stage added.") . "&view=" . $application_id);
 
@@ -233,6 +273,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$stmt->execute()) throw new RuntimeException("Execute failed: " . $stmt->error);
             $stmt->close();
             clearStoredResults($conn);
+            create_notification($conn, [
+                'student_id' => $student_id,
+                'title' => 'Visa renewal approved',
+                'message' => "Your visa renewal application #{$application_id} was approved and your visa record was updated.",
+                'type' => 'visa_approved',
+            ]);
+            log_audit($conn, 'approved_visa_renewal', 'visa_renewal_application', $application_id, 'Approved and updated student visa record.');
 
             redirectTo("visa_renewal.php?msg=" . urlencode("Approved: application + visa record updated.") . "&view=" . $application_id);
 
@@ -703,13 +750,12 @@ if ($view <= 0) {
                     </thead>
                     <tbody>
                       <?php foreach ($documents as $d): ?>
-                        <?php $docUrl = safeDocUrl((string)$d["document_path"]); ?>
                         <tr>
                           <td class="text-muted"><?php echo (int)$d["document_id"]; ?></td>
                           <td class="fw-semibold"><?php echo h($d["document_type"]); ?></td>
                           <td><?php echo h(fmtDate($d["upload_date"])); ?></td>
                           <td>
-                            <a class="btn btn-sm btn-outline-primary" href="<?php echo h($docUrl); ?>" target="_blank" rel="noopener">
+                            <a class="btn btn-sm btn-outline-primary" href="../download.php?id=<?php echo (int)$d["document_id"]; ?>" target="_blank" rel="noopener">
                               <i class="bi bi-eye"></i> View Document
                             </a>
                           </td>

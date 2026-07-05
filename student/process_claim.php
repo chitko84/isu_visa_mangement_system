@@ -63,6 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $claim_amount = (float)($_POST['claim_amount'] ?? 0);
 
     try {
+        require_csrf();
         if (!$currentPolicy) {
             throw new Exception("No insurance policy found. You cannot submit a claim.");
         }
@@ -91,6 +92,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $success = $newId > 0
             ? "Claim submitted successfully. Claim ID: " . $newId
             : "Claim submitted successfully.";
+        notify_staff($conn, 'Insurance claim submitted', "Student {$student_id} submitted an insurance claim.", 'insurance_claim_submitted');
+        log_audit($conn, 'student_submitted_insurance_claim', 'insurance_claim', $newId > 0 ? $newId : null, 'Student submitted insurance claim from claim page.');
 
     } catch (Throwable $e) {
         $error = $e->getMessage();
@@ -171,6 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="text-muted">You need an insurance policy before submitting a claim.</div>
             <?php else: ?>
                 <form method="post" class="row g-3">
+                    <?php echo csrf_field(); ?>
                     <div class="col-md-6">
                         <label class="form-label">Claim Amount (RM)</label>
                         <input

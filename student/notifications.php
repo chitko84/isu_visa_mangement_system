@@ -40,6 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     try {
+        require_csrf();
 
         // Mark ONE notification as read
         if ($action === 'mark_one_read') {
@@ -132,6 +133,7 @@ try {
         <div class="d-flex gap-2">
             <?php if ($unreadCount > 0): ?>
                 <form method="post" class="d-inline">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="mark_all_read">
                     <button class="btn btn-outline-primary btn-sm">
                         Mark all as read (<?php echo (int)$unreadCount; ?>)
@@ -216,6 +218,7 @@ try {
                                 <div class="text-nowrap">
                                     <?php if (!$isRead): ?>
                                         <form method="post" class="d-inline">
+                                            <?php echo csrf_field(); ?>
                                             <input type="hidden" name="action" value="mark_one_read">
                                             <input type="hidden" name="notification_id" value="<?php echo (int)$n['notification_id']; ?>">
                                             <button class="btn btn-sm btn-outline-dark">

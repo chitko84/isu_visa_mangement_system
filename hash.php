@@ -5,11 +5,16 @@ $hash = '';
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $password = (string)($_POST['password'] ?? '');
-    if (strlen($password) < 8) {
-        $error = 'Enter a password with at least 8 characters.';
-    } else {
-        $hash = password_hash($password, PASSWORD_DEFAULT);
+    try {
+        require_csrf();
+        $password = (string)($_POST['password'] ?? '');
+        if (strlen($password) < 8) {
+            $error = 'Enter a password with at least 8 characters.';
+        } else {
+            $hash = password_hash($password, PASSWORD_DEFAULT);
+        }
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
     }
 }
 ?>
@@ -31,6 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php endif; ?>
 
     <form method="post" class="card card-body mb-3">
+        <?php echo csrf_field(); ?>
         <label for="password" class="form-label">Password to hash</label>
         <input type="password" id="password" name="password" class="form-control" minlength="8" required>
         <button class="btn btn-primary mt-3" type="submit">Generate Hash</button>

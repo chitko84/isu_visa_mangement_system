@@ -143,6 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     try {
+        require_csrf();
         // 1) Submit visa renewal (student)
         if ($action === 'submit_renewal') {
             $requested_months = (int)($_POST['requested_months'] ?? 0);
@@ -168,6 +169,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $success = "Visa renewal application submitted successfully. Application ID: {$newAppId}";
+            create_notification($conn, [
+                'student_id' => $student_id,
+                'title' => 'Visa renewal submitted',
+                'message' => "Your visa renewal application #{$newAppId} was submitted.",
+                'type' => 'visa_renewal_submitted',
+            ]);
+            notify_staff($conn, 'Visa renewal submitted', "Student {$student_id} submitted visa renewal application #{$newAppId}.", 'visa_renewal_submitted');
+            log_audit($conn, 'student_submitted_visa_renewal', 'visa_renewal_application', $newAppId, 'Student submitted visa renewal.');
 
             // refresh current app
             $stmt = $conn->prepare($appSqlActive);
@@ -243,6 +252,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $success = "Document uploaded successfully. Document ID: {$newDocId}";
+            notify_staff($conn, 'Student uploaded document', "Student {$student_id} uploaded {$document_type} for visa renewal application {$currentAppId}.", 'document_upload');
         }
 
         // 2B) Add MULTIPLE documents in one submit (student)
@@ -344,6 +354,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
 
                     $uploaded++;
+                    notify_staff($conn, 'Student uploaded document', "Student {$student_id} uploaded {$document_type} for visa renewal application {$currentAppId}.", 'document_upload');
 
                 } catch (Throwable $ex) {
                     // If file moved but DB failed, delete file (best effort)
@@ -465,6 +476,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $success = "Document updated successfully.";
+            log_audit($conn, 'student_updated_document', 'visa_document', $document_id, 'Student updated visa renewal document.');
         }
 
         // 4) Delete document (student)
@@ -511,6 +523,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $success = "Document deleted successfully.";
+            log_audit($conn, 'student_deleted_document', 'visa_document', $document_id, 'Student deleted visa renewal document.');
         }
 
         // 5) Staff-only actions
@@ -702,6 +715,7 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                 </div>
             <?php else: ?>
                 <form method="post" class="row g-3">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="submit_renewal">
 
                     <div class="col-md-6">
@@ -794,6 +808,7 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                     <div class="col-md-6">
                         <h6 class="mb-2">Staff: Add Status</h6>
                         <form method="post" class="row g-2">
+                            <?php echo csrf_field(); ?>
                             <input type="hidden" name="action" value="staff_add_status">
                             <input type="hidden" name="application_id" value="<?php echo (int)$currentAppId; ?>">
                             <div class="col-12">
@@ -811,6 +826,7 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                     <div class="col-md-6">
                         <h6 class="mb-2">Staff: Update Application Status</h6>
                         <form method="post" class="row g-2">
+                            <?php echo csrf_field(); ?>
                             <input type="hidden" name="action" value="staff_update_application_status">
                             <input type="hidden" name="application_id" value="<?php echo (int)$currentAppId; ?>">
                             <div class="col-12">
@@ -856,6 +872,7 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                     </div>
 
                     <form method="post" enctype="multipart/form-data" id="multiUploadForm">
+                        <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="add_documents_batch">
 
                         <div class="table-responsive">
@@ -977,7 +994,7 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                                     <td class="fw-semibold"><?php echo h($d['document_type']); ?></td>
                                     <td>
                                         <?php if (!empty($d['document_path'])): ?>
-                                            <a href="<?php echo h($d['document_path']); ?>" target="_blank" rel="noopener">View</a>
+                                            <a href="../download.php?id=<?php echo (int)$d['document_id']; ?>" target="_blank" rel="noopener">View</a>
                                         <?php else: ?>
                                             <span class="text-muted">-</span>
                                         <?php endif; ?>
@@ -1002,6 +1019,7 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                                         <div class="collapse mt-2" id="editDoc<?php echo $docId; ?>">
                                             <div class="border rounded p-2">
                                                 <form method="post" enctype="multipart/form-data" class="row g-2">
+                                                    <?php echo csrf_field(); ?>
                                                     <input type="hidden" name="action" value="update_document">
                                                     <input type="hidden" name="document_id" value="<?php echo $docId; ?>">
 
@@ -1052,6 +1070,7 @@ if ($app && ($app['status'] ?? '') !== 'Passport collected') {
                                                     <div class="modal-footer">
                                                         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                                                         <form method="post" class="m-0">
+                                                            <?php echo csrf_field(); ?>
                                                             <input type="hidden" name="action" value="delete_document">
                                                             <input type="hidden" name="document_id" value="<?php echo $docId; ?>">
                                                             <button type="submit" class="btn btn-danger">Yes, Delete</button>

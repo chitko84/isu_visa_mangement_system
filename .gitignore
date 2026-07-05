@@ -10,3 +10,8 @@ uploads/documents/*
 !uploads/documents/.gitkeep
 uploads/insurance_claims/*
 !uploads/insurance_claims/.gitkeep
+includes/db.local.php
+.env
+.env.*
+*.log
+logs/*

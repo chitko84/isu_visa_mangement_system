@@ -22,6 +22,11 @@ $countries_result = $conn->query("SELECT country_id, country_name FROM country O
 
 // Handle submit
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        require_csrf();
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+    }
 
     $first_name = trim($_POST['first_name'] ?? '');
     $last_name  = trim($_POST['last_name'] ?? '');
@@ -44,12 +49,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $student_type      = trim($_POST['student_type'] ?? 'UG');
 
     // ---- Validation ----
-    if (
+    if ($error === '' && (
         $first_name === '' || $last_name === '' || $email === '' || $phone === '' ||
         $password === '' || $confirm_password === '' || $student_id === 0 ||
         $program_id === 0 || $school_id === 0 || $nationality_id === 0 ||
         $gender === '' || $date_of_birth === ''
-    ) {
+    )) {
         $error = "All required fields must be filled!";
     } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $error = "Please enter a valid email address.";
@@ -180,6 +185,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $conn->commit();
             $success = "Registration successful! Your Student ID: $student_id. You can now login.";
+            create_notification($conn, [
+                'student_id' => $student_id,
+                'title' => 'Registration successful',
+                'message' => 'Your ISU account was created successfully.',
+                'type' => 'registration',
+            ]);
+            notify_staff($conn, 'New student registration', "Student {$first_name} {$last_name} registered with ID {$student_id}.", 'student_registration');
+            log_audit($conn, 'student_registered', 'student', $student_id, 'Student self-registration completed.');
             $_POST = [];
 
         } catch (Exception $e) {
@@ -598,6 +611,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             <?php if(!$success): ?>
             <form method="POST" action="" id="registrationForm">
+                <?php echo csrf_field(); ?>
 
                 <!-- Step 1 -->
                 <div class="step-content active" id="step1">

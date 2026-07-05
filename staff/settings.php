@@ -37,6 +37,7 @@ if (!is_dir($uploadDirAbs)) {
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_cropped_profile_photo') {
     try {
+        require_csrf();
         $img = trim($_POST['cropped_image'] ?? '');
         if ($img === '') {
             throw new Exception("No cropped image received.");
@@ -97,6 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         clearStoredResults($conn);
 
         $success = "Profile photo updated successfully.";
+        log_audit($conn, 'staff_updated_profile_photo', 'staff', $staff_id, 'Staff updated profile photo from settings.');
 
     } catch (Throwable $e) {
         $error = $e->getMessage();
@@ -112,12 +114,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     // 1) Update profile details
     if ($action === "update_profile") {
+        try {
+            require_csrf();
+        } catch (Throwable $e) {
+            $error = $e->getMessage();
+        }
         $first_name  = trim($_POST["first_name"] ?? "");
         $last_name   = trim($_POST["last_name"] ?? "");
         $phone       = trim($_POST["phone"] ?? "");
         $department  = trim($_POST["department"] ?? "");
 
-        if ($first_name === "" || $last_name === "") {
+        if ($error !== "") {
+            // CSRF error already set.
+        } elseif ($first_name === "" || $last_name === "") {
             $error = "First name and last name are required.";
         } else {
             try {
@@ -130,6 +139,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
                 if ($stmt->execute()) {
                     $success = $success ?: "Profile updated successfully.";
+                    log_audit($conn, 'staff_updated_settings', 'staff', $staff_id, 'Staff updated profile settings.');
                 } else {
                     $error = "Profile update failed: " . $stmt->error;
                 }
@@ -144,11 +154,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     // 2) Change password
     if ($action === "change_password") {
+        try {
+            require_csrf();
+        } catch (Throwable $e) {
+            $error = $e->getMessage();
+        }
         $current_password = (string)($_POST["current_password"] ?? "");
         $new_password     = (string)($_POST["new_password"] ?? "");
         $confirm_password = (string)($_POST["confirm_password"] ?? "");
 
-        if ($new_password === "" || $confirm_password === "") {
+        if ($error !== "") {
+            // CSRF error already set.
+        } elseif ($new_password === "" || $confirm_password === "") {
             $error = "Please fill in the new password fields.";
         } elseif ($new_password !== $confirm_password) {
             $error = "New password and confirm password do not match.";
@@ -179,6 +196,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
                     if ($stmt->execute()) {
                         $success = $success ?: "Password updated successfully.";
+                        log_audit($conn, 'staff_changed_password', 'staff', $staff_id, 'Staff changed password.');
                     } else {
                         $error = "Password update failed: " . $stmt->error;
                     }
@@ -324,6 +342,7 @@ if ($profilePhoto) {
                            accept="image/png,image/jpeg,image/webp">
 
                     <form method="post" id="saveCroppedForm" class="mt-3">
+                        <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="save_cropped_profile_photo">
                         <input type="hidden" name="cropped_image" id="cropped_image">
                         <button type="button" id="openEditorBtn" class="btn btn-primary w-100" disabled>
@@ -345,6 +364,7 @@ if ($profilePhoto) {
                 </div>
                 <div class="card-body">
                     <form method="POST" class="row g-3">
+                        <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="update_profile">
 
                         <div class="col-md-6">
@@ -383,6 +403,7 @@ if ($profilePhoto) {
                 </div>
                 <div class="card-body">
                     <form method="POST" class="row g-3">
+                        <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="change_password">
 
                         <div class="col-md-4">

@@ -170,6 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postExitId = (int)($_POST['exit_id'] ?? 0); // allow forms to pass exit_id explicitly
 
     try {
+        require_csrf();
 
         // ---------------------------
         // Student: submit exit request
@@ -208,6 +209,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $selectedExitId = $newExitId;
 
             $success = "Exit request submitted successfully. Exit ID: {$newExitId}";
+            create_notification($conn, [
+                'student_id' => $student_id,
+                'title' => 'Exit request submitted',
+                'message' => "Your exit request #{$newExitId} was submitted.",
+                'type' => 'exit_submitted',
+            ]);
+            notify_staff($conn, 'Exit request submitted', "Student {$student_id} submitted exit request #{$newExitId}.", 'exit_submitted');
+            log_audit($conn, 'student_submitted_exit_request', 'exit_case', $newExitId, 'Student submitted exit request.');
         }
 
         // ---------------------------
@@ -236,6 +245,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $selectedExitId = $exit_id;
 
             $success = "Exit status updated.";
+            create_notification($conn, [
+                'student_id' => $student_id,
+                'title' => 'Exit status updated',
+                'message' => "Your exit request #{$exit_id} status was updated to {$new_status}.",
+                'type' => 'exit_status_update',
+            ]);
+            log_audit($conn, 'updated_exit_status', 'exit_case', $exit_id, "Exit status changed to {$new_status}.");
         }
 
         // ---------------------------
@@ -604,6 +620,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             <?php else: ?>
                 <form method="post" class="row g-3">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="submit_exit">
 
                     <div class="col-md-6">
@@ -688,6 +705,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <hr>
                 <h6 class="mb-2">Staff: Create Clearance Record</h6>
                 <form method="post" class="row g-2">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="staff_create_clearance">
                     <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
 
@@ -751,6 +769,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <td class="text-nowrap">
                                         <div class="d-flex gap-1">
                                             <form id="<?php echo h($formId); ?>" method="post" class="d-inline">
+                                                <?php echo csrf_field(); ?>
                                                 <input type="hidden" name="action" value="staff_update_unit_clearance">
                                                 <input type="hidden" name="unit_clearance_id" value="<?php echo (int)$u['unit_clearance_id']; ?>">
                                                 <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
@@ -760,6 +779,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             </form>
 
                                             <form method="post" onsubmit="return confirm('Delete this unit clearance?');" class="d-inline">
+                                                <?php echo csrf_field(); ?>
                                                 <input type="hidden" name="action" value="staff_delete_unit_clearance">
                                                 <input type="hidden" name="unit_clearance_id" value="<?php echo (int)$u['unit_clearance_id']; ?>">
                                                 <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
@@ -787,6 +807,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <hr>
                 <h6 class="mb-2">Staff: Add Unit Clearance</h6>
                 <form method="post" class="row g-2">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="staff_upsert_unit_clearance">
                     <input type="hidden" name="clearance_id" value="<?php echo (int)$clearance['clearance_id']; ?>">
                     <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
@@ -864,6 +885,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <td class="text-nowrap">
                                         <div class="d-flex gap-1">
                                             <form id="<?php echo h($formId); ?>" method="post" class="d-inline">
+                                                <?php echo csrf_field(); ?>
                                                 <input type="hidden" name="action" value="staff_update_exit_visa_action">
                                                 <input type="hidden" name="exit_visa_id" value="<?php echo (int)$a['exit_visa_id']; ?>">
                                                 <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
@@ -873,6 +895,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             </form>
 
                                             <form method="post" onsubmit="return confirm('Delete this exit visa action?');" class="d-inline">
+                                                <?php echo csrf_field(); ?>
                                                 <input type="hidden" name="action" value="staff_delete_exit_visa_action">
                                                 <input type="hidden" name="exit_visa_id" value="<?php echo (int)$a['exit_visa_id']; ?>">
                                                 <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
@@ -901,6 +924,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <hr>
                 <h6 class="mb-2">Staff: Add Exit Visa Action</h6>
                 <form method="post" class="row g-2">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="staff_add_exit_visa_action">
                     <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
 
@@ -931,6 +955,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <hr>
                 <h6 class="mb-2">Staff: Update Exit Status</h6>
                 <form method="post" class="row g-2">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="staff_update_exit_status">
                     <input type="hidden" name="exit_id" value="<?php echo (int)$exitCase['exit_id']; ?>">
 

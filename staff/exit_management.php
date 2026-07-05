@@ -165,11 +165,29 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $new_status = trim($_POST["exit_status"] ?? "");
             if ($exit_id <= 0 || $new_status === "") throw new RuntimeException("Invalid exit id / status.");
 
+            $studentForExit = 0;
+            $lookup = $conn->prepare("SELECT student_id FROM exit_case WHERE exit_id = ? LIMIT 1");
+            if ($lookup) {
+                $lookup->bind_param("i", $exit_id);
+                $lookup->execute();
+                $studentForExit = (int)($lookup->get_result()->fetch_assoc()['student_id'] ?? 0);
+                $lookup->close();
+            }
+
             clearStoredResults($conn);
             callProc($conn, "CALL sp_staff_update_exit_status(?, ?)", "is", [$exit_id, $new_status])->close();
             clearStoredResults($conn);
 
             $success = "Exit status updated.";
+            if ($studentForExit > 0) {
+                create_notification($conn, [
+                    'student_id' => $studentForExit,
+                    'title' => 'Exit status updated',
+                    'message' => "Your exit request #{$exit_id} was updated to {$new_status}.",
+                    'type' => 'exit_status_update',
+                ]);
+            }
+            log_audit($conn, 'updated_exit_status', 'exit_case', $exit_id, "Exit status changed to {$new_status}.");
             $selected_exit = $exit_id;
         }
 

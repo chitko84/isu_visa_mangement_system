@@ -266,13 +266,15 @@ switch($application['status']) {
                                     </td>
                                     <td>
                                         <div class="btn-group btn-group-sm">
-                                            <a href="<?php echo htmlspecialchars($doc['document_path']); ?>" 
+                                            <a href="../download.php?id=<?php echo (int)$doc['document_id']; ?>" 
                                                target="_blank" 
+                                               rel="noopener"
                                                class="btn btn-outline-primary">
                                                 <i class="bi bi-eye"></i>
                                             </a>
-                                            <a href="<?php echo htmlspecialchars($doc['document_path']); ?>" 
-                                               download 
+                                            <a href="../download.php?id=<?php echo (int)$doc['document_id']; ?>" 
+                                               target="_blank"
+                                               rel="noopener"
                                                class="btn btn-outline-success">
                                                 <i class="bi bi-download"></i>
                                             </a>

@@ -15,13 +15,15 @@ if (isset($_SESSION['user_id'])) {
 // Handle login form submission
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email = trim($_POST['email'] ?? '');
-    $password = (string)($_POST['password'] ?? '');
-    $role = isset($_POST['role']) ? trim($_POST['role']) : '';
-    
-    if (empty($email) || empty($password) || empty($role)) {
-        $error = "Please enter email, password, and select a role.";
-    } else {
+    try {
+        require_csrf();
+        $email = trim($_POST['email'] ?? '');
+        $password = (string)($_POST['password'] ?? '');
+        $role = isset($_POST['role']) ? trim($_POST['role']) : '';
+
+        if (empty($email) || empty($password) || empty($role)) {
+            $error = "Please enter email, password, and select a role.";
+        } else {
         if ($role === 'student') {
             // Check student login - Now with password column
             $query = "SELECT student_id, first_name, last_name, email, program_id, status, password 
@@ -119,6 +121,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $error = "Invalid role selected.";
         }
+    }
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
     }
 }
 ?>
@@ -526,6 +531,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <?php endif; ?>
             
             <form method="POST" action="" id="loginForm">
+                <?php echo csrf_field(); ?>
                 <div class="mb-3">
                     <label for="email" class="form-label" data-i18n="label_email">Email Address</label>
                     <div class="input-group">
@@ -582,7 +588,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
                 
                 <div class="text-center mt-3">
-                    <span class="text-muted small" data-i18n="forgot_password">Forgot your password? Please contact ISSU staff.</span>
+                    <a href="forgot-password.php" class="text-decoration-none small" data-i18n="forgot_password">Forgot your password?</a>
                 </div>
             </form>
             

@@ -397,8 +397,9 @@ if ($visas->num_rows > 0) {
                                     </div>
                                 </div>
                                 <div>
-                                    <a href="<?php echo htmlspecialchars($doc['document_path']); ?>" 
+                                    <a href="../download.php?id=<?php echo (int)$doc['document_id']; ?>" 
                                        target="_blank" 
+                                       rel="noopener"
                                        class="btn btn-sm btn-outline-primary">
                                         <i class="bi bi-eye"></i>
                                     </a>

@@ -54,9 +54,40 @@ function require_login(): void {
 
 function require_role(array $allowed_roles): void {
     require_login();
-    if (!in_array(current_role(), $allowed_roles, true)) {
+    if (!user_has_role($allowed_roles)) {
         redirect('../login.php?unauthorized=1');
     }
+}
+
+function normalize_role(string $role): string {
+    $role = strtolower(trim($role));
+    $aliases = [
+        'super admin' => 'super_admin',
+        'super-admin' => 'super_admin',
+        'visa officer' => 'visa_officer',
+        'insurance officer' => 'insurance_officer',
+        'exit officer' => 'exit_officer',
+    ];
+    return $aliases[$role] ?? $role;
+}
+
+function user_has_role(array $allowed_roles): bool {
+    $current = normalize_role(current_role());
+    $allowed = array_map('normalize_role', $allowed_roles);
+
+    if (in_array($current, $allowed, true)) {
+        return true;
+    }
+
+    if (in_array($current, ['admin', 'super_admin'], true) && array_intersect($allowed, ['staff', 'admin', 'super_admin', 'visa_officer', 'insurance_officer', 'exit_officer'])) {
+        return true;
+    }
+
+    if ($current === 'staff' && array_intersect($allowed, ['staff', 'visa_officer', 'insurance_officer', 'exit_officer'])) {
+        return true;
+    }
+
+    return false;
 }
 
 function destroy_session(): void {
@@ -98,6 +129,185 @@ function validate_uploaded_file(array $file, array $allowed_extensions, int $max
     }
 
     return ['success' => true, 'extension' => $extension];
+}
+
+function csrf_token(): string {
+    secure_session_start();
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+function csrf_field(): string {
+    return '<input type="hidden" name="csrf_token" value="' . issu_h(csrf_token()) . '">';
+}
+
+function verify_csrf_token(?string $token = null): bool {
+    secure_session_start();
+    $token = $token ?? (string)($_POST['csrf_token'] ?? '');
+    return $token !== '' && hash_equals((string)($_SESSION['csrf_token'] ?? ''), $token);
+}
+
+function require_csrf(): void {
+    if (!verify_csrf_token()) {
+        throw new RuntimeException('Your form session expired. Please refresh the page and try again.');
+    }
+}
+
+function flash_set(string $type, string $message): void {
+    secure_session_start();
+    $_SESSION['flash_messages'][] = [
+        'type' => in_array($type, ['success', 'danger', 'warning', 'info'], true) ? $type : 'info',
+        'message' => $message,
+    ];
+}
+
+function flash_get(): array {
+    secure_session_start();
+    $messages = $_SESSION['flash_messages'] ?? [];
+    unset($_SESSION['flash_messages']);
+    return is_array($messages) ? $messages : [];
+}
+
+function flash_render(): void {
+    foreach (flash_get() as $flash) {
+        $type = $flash['type'] ?? 'info';
+        $message = $flash['message'] ?? '';
+        echo '<div class="alert alert-' . issu_h($type) . ' alert-dismissible fade show" role="alert">';
+        echo issu_h($message);
+        echo '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>';
+        echo '</div>';
+    }
+}
+
+function db_has_column(mysqli $conn, string $table, string $column): bool {
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) AS c
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND COLUMN_NAME = ?
+    ");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param("ss", $table, $column);
+    $stmt->execute();
+    $count = (int)($stmt->get_result()->fetch_assoc()['c'] ?? 0);
+    $stmt->close();
+    return $count > 0;
+}
+
+function create_notification(mysqli $conn, array $data): bool {
+    $title = trim((string)($data['title'] ?? 'Notification'));
+    $message = trim((string)($data['message'] ?? ''));
+    $student_id = isset($data['student_id']) ? (int)$data['student_id'] : null;
+    $staff_id = isset($data['staff_id']) ? (int)$data['staff_id'] : null;
+    $type = trim((string)($data['type'] ?? 'general'));
+
+    try {
+        $hasStaff = db_has_column($conn, 'notifications', 'staff_id');
+        $hasType = db_has_column($conn, 'notifications', 'notification_type');
+
+        if ($hasStaff && $hasType) {
+            $stmt = $conn->prepare("INSERT INTO notifications (student_id, staff_id, notification_type, title, message, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())");
+            $stmt->bind_param("iisss", $student_id, $staff_id, $type, $title, $message);
+        } elseif ($hasStaff) {
+            $stmt = $conn->prepare("INSERT INTO notifications (student_id, staff_id, title, message, is_read, created_at) VALUES (?, ?, ?, ?, 0, NOW())");
+            $stmt->bind_param("iiss", $student_id, $staff_id, $title, $message);
+        } else {
+            if ($student_id === null || $student_id <= 0) {
+                return false;
+            }
+            $stmt = $conn->prepare("INSERT INTO notifications (student_id, title, message, is_read, created_at) VALUES (?, ?, ?, 0, NOW())");
+            $stmt->bind_param("iss", $student_id, $title, $message);
+        }
+
+        if (!$stmt) {
+            return false;
+        }
+        $ok = $stmt->execute();
+        $stmt->close();
+        return $ok;
+    } catch (Throwable $e) {
+        error_log("Notification insert failed: " . $e->getMessage());
+        return false;
+    }
+}
+
+function notify_staff(mysqli $conn, string $title, string $message, string $type = 'staff_alert'): void {
+    try {
+        $result = $conn->query("SELECT staff_id FROM staff WHERE status = 'Active'");
+        if (!$result) {
+            return;
+        }
+        while ($row = $result->fetch_assoc()) {
+            create_notification($conn, [
+                'staff_id' => (int)$row['staff_id'],
+                'title' => $title,
+                'message' => $message,
+                'type' => $type,
+            ]);
+        }
+        $result->free();
+    } catch (Throwable $e) {
+        error_log("Staff notification failed: " . $e->getMessage());
+    }
+}
+
+function log_audit(mysqli $conn, string $action, string $entity_type = '', ?int $entity_id = null, string $details = ''): void {
+    try {
+        $actor_id = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+        $actor_role = (string)($_SESSION['role'] ?? 'guest');
+        $ip = $_SERVER['REMOTE_ADDR'] ?? null;
+        $ua = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
+
+        $stmt = $conn->prepare("
+            INSERT INTO audit_logs (actor_id, actor_role, action, entity_type, entity_id, details, ip_address, user_agent, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ");
+        if (!$stmt) {
+            return;
+        }
+        $stmt->bind_param("isssisss", $actor_id, $actor_role, $action, $entity_type, $entity_id, $details, $ip, $ua);
+        $stmt->execute();
+        $stmt->close();
+    } catch (Throwable $e) {
+        error_log("Audit log failed: " . $e->getMessage());
+    }
+}
+
+function send_email_notification(string $to, string $subject, string $html_message): bool {
+    $to = trim($to);
+    if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+        return false;
+    }
+
+    $headers = "MIME-Version: 1.0\r\n";
+    $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
+    $headers .= "From: ISU Visa Management System <noreply@example.com>\r\n";
+
+    $enabled = getenv('ISU_EMAIL_ENABLED') === '1';
+    if (!$enabled) {
+        error_log("EMAIL DISABLED | TO: {$to} | SUBJECT: {$subject} | MESSAGE: " . strip_tags($html_message));
+        return true;
+    }
+
+    try {
+        return mail($to, $subject, $html_message, $headers);
+    } catch (Throwable $e) {
+        error_log("Email send failed: " . $e->getMessage());
+        return false;
+    }
+}
+
+function base_url(): string {
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    $scheme = $https ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $scriptDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
+    return $scheme . '://' . $host . ($scriptDir === '' ? '' : $scriptDir);
 }
 
 /**

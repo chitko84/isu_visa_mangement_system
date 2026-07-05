@@ -98,6 +98,24 @@ Logout is handled by:
 
 Logout clears session data, destroys the session, removes the session cookie, and redirects back to the login page.
 
+### Password Reset
+
+The project now includes a password reset flow:
+
+- `forgot-password.php` accepts a student or staff/admin email.
+- `reset-password.php` accepts a secure reset token and lets the user set a new password.
+- Reset tokens are randomly generated, stored as SHA-256 hashes, and expire after 1 hour.
+- Used tokens are marked with `used_at` so the same link cannot be reused.
+- Passwords are saved with PHP password hashing.
+
+Required database table:
+
+- `password_resets`
+
+Import `database/security_updates.sql` or the fresh `database/schema.sql` file before using this feature.
+
+Email sending is prepared but disabled by default for local XAMPP development. When email is disabled, reset links are written to the PHP error log for development/testing.
+
 ### Authentication and Session Protection
 
 Protected student pages load `student/header.php`.
@@ -110,6 +128,17 @@ The shared helper file `includes/functions.php` provides session helpers used by
 - staff pages require `staff` or `admin`
 
 This prevents student pages from being opened by staff accounts and staff pages from being opened by student accounts.
+
+### CSRF Protection
+
+The system includes reusable CSRF helpers in `includes/functions.php`:
+
+- `csrf_token()`
+- `csrf_field()`
+- `verify_csrf_token()`
+- `require_csrf()`
+
+Important POST forms now include CSRF tokens, including login, registration, password reset, profile uploads, settings, student documents, student visa renewal, student insurance, student exit, staff dashboard actions, staff notifications, staff insurance actions, staff exit actions, staff student actions, and staff visa renewal actions.
 
 ### Student Dashboard
 
@@ -190,6 +219,25 @@ Other upload folders currently used or reserved by the project:
 
 Real uploaded documents and profile images are ignored by Git for privacy and security.
 
+### Secure Document Viewing
+
+Visa renewal documents are served through:
+
+```text
+download.php?id=DOCUMENT_ID
+```
+
+The secure handler:
+
+- requires login
+- checks student ownership
+- allows staff/admin/visa-officer style roles to review documents
+- prevents path traversal
+- only serves files from `uploads/visa_documents`
+- logs sensitive document review/download events in `audit_logs`
+
+Existing upload storage remains unchanged, but public pages no longer link directly to private visa document paths.
+
 ### Student Insurance Management
 
 Student insurance functionality is handled mainly by:
@@ -239,6 +287,19 @@ Student notifications are handled by:
 - `student/notifications.php`
 
 Notifications are stored in the `notifications` table and can be shown in the student navigation badge and notification page.
+
+The notification system is used for events such as:
+
+- registration success
+- visa renewal submission
+- document upload
+- visa status/timeline updates
+- visa approval
+- insurance claim/renewal status changes
+- exit request submission and status changes
+- staff updates to student records
+
+Students only see notifications linked to their own `student_id`.
 
 ### Staff Dashboard
 
@@ -325,6 +386,20 @@ Staff notification-related functionality is handled by:
 - `staff/send_notification.php`
 
 Staff can send and review notifications depending on the configured database tables.
+
+The `notifications` table supports staff-targeted notifications through the optional `staff_id` column added by `database/security_updates.sql`. Staff/admin users can review notifications from `staff/notifications.php`, and active staff can receive alerts when students submit important requests.
+
+### Audit Logs
+
+Audit logging is supported through:
+
+- table: `audit_logs`
+- helper: `log_audit()`
+- page: `staff/audit_logs.php`
+
+Tracked events include password reset requests/completions, profile changes, student record updates/deletes, visa renewal status changes, visa approvals, insurance status changes, exit status changes, and secure document downloads.
+
+Only admin/super-admin style users can open the audit log page.
 
 ### Staff Reports
 
@@ -473,7 +548,7 @@ isu_visa_mangement_system/
 
 ### `includes/db.php`
 
-Stores the MySQL connection settings. The default local configuration is:
+Loads the MySQL connection settings. The default local configuration is:
 
 - host: `localhost`
 - username: `root`
@@ -481,6 +556,33 @@ Stores the MySQL connection settings. The default local configuration is:
 - database: `issu`
 
 Do not put production passwords or private credentials in this file before committing.
+
+### `includes/db.local.php`
+
+Optional local-only database configuration file. This file is ignored by Git and should be used for real local/production credentials.
+
+Create it by copying:
+
+```text
+includes/db.example.php
+```
+
+Example format:
+
+```php
+<?php
+return [
+    'host' => 'localhost',
+    'username' => 'root',
+    'password' => '',
+    'database' => 'issu',
+    'port' => 3306,
+];
+```
+
+### `includes/db.example.php`
+
+Safe example database config file committed to the repository.
 
 ### `includes/functions.php`
 
@@ -498,6 +600,22 @@ Contains shared helpers for:
 ### `issu.sql`
 
 Contains the database schema, stored procedures, triggers, indexes, constraints, and sample data exported from phpMyAdmin/MariaDB.
+
+### `database/schema.sql`
+
+Schema-first database import file generated from the existing SQL export. It includes structure, procedures, triggers, constraints, and the new security/password-reset/audit/notification tables.
+
+### `database/demo_data.sql`
+
+Demo/sample insert file generated from the existing SQL export. Insert blocks containing local upload paths are skipped so private upload references are not included.
+
+### `database/security_updates.sql`
+
+Migration file for existing installs. Import this into an existing `issu` database to add:
+
+- `password_resets`
+- `audit_logs`
+- extended `notifications` columns for staff notifications and notification types
 
 ### `student/header.php`
 
@@ -562,16 +680,23 @@ issu
 
 Use `utf8mb4` collation where possible.
 
-### 6. Import the SQL File
+### 6. Import the SQL Files
 
 In phpMyAdmin:
 
 1. Select the `issu` database.
 2. Click **Import**.
-3. Choose `issu.sql` from the project root.
+3. Choose `database/schema.sql`.
 4. Click **Go**.
+5. Optional: import `database/demo_data.sql` if you want sample/demo rows.
 
-The SQL file includes tables, constraints, stored procedures, triggers, indexes, and sample records.
+For existing databases that were already imported from `issu.sql`, import:
+
+```text
+database/security_updates.sql
+```
+
+This adds the password reset, audit log, and enhanced notification structures without replacing existing data.
 
 ### 7. Configure Database Connection
 
@@ -591,6 +716,12 @@ $dbname = "issu";
 ```
 
 For a default XAMPP installation, these values normally work.
+
+Recommended local override:
+
+1. Copy `includes/db.example.php` to `includes/db.local.php`.
+2. Edit `includes/db.local.php`.
+3. Keep `includes/db.local.php` uncommitted.
 
 ### 8. Create Upload Folders if Missing
 
@@ -634,10 +765,23 @@ The project uses a MySQL/MariaDB database named:
 issu
 ```
 
-The main SQL file is:
+The original full SQL export is:
 
 ```text
 issu.sql
+```
+
+The recommended fresh-install files are:
+
+```text
+database/schema.sql
+database/demo_data.sql
+```
+
+The recommended existing-install migration file is:
+
+```text
+database/security_updates.sql
 ```
 
 The SQL file defines tables such as:
@@ -665,6 +809,16 @@ The SQL file defines tables such as:
 - `academic_dates`
 
 It also defines stored procedures used by the PHP pages, including student profile, visa renewal, insurance, exit, and report procedures.
+
+New security tables:
+
+- `password_resets`
+- `audit_logs`
+
+Updated notification support:
+
+- `notifications.staff_id`
+- `notifications.notification_type`
 
 If import fails, check:
 
@@ -718,6 +872,11 @@ This project includes practical security improvements while keeping the existing
 - key visa renewal uploads validate MIME type as well as extension
 - private upload folders are ignored by Git
 - database connection errors are logged instead of printing raw connection details
+- secure password reset tokens are hashed and expire
+- sensitive visa documents are served through permission-checked `download.php`
+- important actions are recorded in `audit_logs`
+- in-app notifications are stored in the database
+- local database credentials can be kept in ignored `includes/db.local.php`
 
 Important security reminders:
 
@@ -738,6 +897,38 @@ Recommended production improvements:
 - add account lockout/rate limiting
 - add password reset through email
 - review all sample data before deployment
+
+## Email Notification Setup
+
+Email support is centralized in `send_email_notification()` inside `includes/functions.php`.
+
+For XAMPP/local development:
+
+- Email sending is disabled by default.
+- Password reset links and email messages are written to the PHP error log.
+- This prevents local testing from crashing when SMTP is not configured.
+
+To enable basic PHP `mail()` sending:
+
+1. Configure SMTP/sendmail for your PHP installation.
+2. Set environment variable:
+
+```text
+ISU_EMAIL_ENABLED=1
+```
+
+For production, replace or extend `send_email_notification()` with a real SMTP library such as PHPMailer or Symfony Mailer. Keep SMTP host, username, password, port, and encryption settings outside Git, preferably in environment variables or an ignored local config file.
+
+Prepared notification use cases:
+
+- password reset
+- visa expiry reminders
+- visa renewal status changes
+- missing document reminders
+- insurance expiry reminders
+- exit case status changes
+
+Some reminder workflows still require scheduled jobs or staff-triggered actions to call the helper at the right time.
 
 ## Student Usage Guide
 
@@ -930,6 +1121,26 @@ staff/reports.php
 
 Reports help staff monitor expiring visas, insurance deadlines, pending passport collection, and exit cases.
 
+### View Audit Logs
+
+Admin users can open:
+
+```text
+staff/audit_logs.php
+```
+
+Use this page to review important staff/admin actions and sensitive document downloads.
+
+### Review Notifications
+
+Staff/admin users can open:
+
+```text
+staff/notifications.php
+```
+
+This page shows notifications related to student submissions and staff activity. Staff-targeted unread counts require the updated `notifications.staff_id` column from `database/security_updates.sql`.
+
 ## Project Status
 
 This is an academic/student management system project and is actively improved. The current version is suitable for local development, demonstrations, academic review, and portfolio presentation. Before real production use, it should receive a full security review, deployment review, and privacy review.
@@ -939,7 +1150,7 @@ This is an academic/student management system project and is actively improved. 
 Realistic future improvements include:
 
 - email notifications for renewal reminders and status updates
-- password reset flow
+- SMTP-backed password reset emails
 - advanced admin analytics
 - configurable role permissions
 - audit logs for staff/admin actions
@@ -982,7 +1193,41 @@ http://localhost/isu_visa_mangement_system/
 
 ### Missing Tables or Stored Procedures
 
-Import `issu.sql` again into a clean `issu` database. Many pages depend on stored procedures, so importing only table definitions may not be enough.
+For a fresh setup, import `database/schema.sql`. Optionally import `database/demo_data.sql`.
+
+For an existing setup, import `database/security_updates.sql`.
+
+Many pages depend on stored procedures, so importing only table definitions may not be enough.
+
+### Password Reset Table Missing
+
+Import:
+
+```text
+database/security_updates.sql
+```
+
+The password reset flow requires the `password_resets` table.
+
+### Audit Log Table Missing
+
+Import:
+
+```text
+database/security_updates.sql
+```
+
+The audit page requires the `audit_logs` table.
+
+### Staff Notifications Not Showing as Expected
+
+Import:
+
+```text
+database/security_updates.sql
+```
+
+Staff-targeted notifications require the `staff_id` column on the `notifications` table.
 
 ### Upload Folder Permission Issue
 
@@ -1034,7 +1279,80 @@ This is expected. Staff/admin users should use the staff portal.
 
 ### Forgot Password
 
-A self-service password reset page is not currently implemented. Staff/admin intervention or database-level password hash update may be required in a local academic setup.
+Use:
+
+```text
+forgot-password.php
+```
+
+If email is not configured on XAMPP, check the PHP error log for the generated reset link.
+
+## Deployment Guide
+
+### XAMPP Local Testing
+
+1. Start Apache and MySQL from XAMPP Control Panel.
+2. Place the project in:
+
+```text
+C:\xampp\htdocs\isu_visa_mangement_system
+```
+
+3. Create database `issu`.
+4. Import `database/schema.sql`.
+5. Optional: import `database/demo_data.sql`.
+6. Copy `includes/db.example.php` to `includes/db.local.php` if your credentials differ.
+7. Open:
+
+```text
+http://localhost/isu_visa_mangement_system/
+```
+
+8. Test:
+
+- registration
+- login/logout
+- forgot password
+- student dashboard
+- visa renewal submission
+- document upload and secure view
+- staff visa renewal review
+- notification pages
+- audit log page
+
+### cPanel or Shared Hosting
+
+1. Upload the project files to `public_html` or a subfolder.
+2. Create a MySQL database and user from cPanel.
+3. Import `database/schema.sql` with phpMyAdmin.
+4. Optional: import `database/demo_data.sql`.
+5. Create `includes/db.local.php` on the server with hosting credentials.
+6. Make upload folders writable:
+
+```text
+staff/uploads/profile
+student/uploads/profile
+uploads/visa_documents
+uploads/documents
+uploads/insurance_claims
+uploads/profile
+```
+
+7. Configure HTTPS.
+8. Configure SMTP/email if using password reset emails.
+9. Confirm `.env`, `db.local.php`, logs, and private uploads are not publicly downloadable or committed.
+
+### VPS Deployment Notes
+
+1. Install Apache or Nginx, PHP 8+, MySQL/MariaDB, and required PHP extensions.
+2. Configure a virtual host pointing to the project directory.
+3. Import `database/schema.sql`.
+4. Create `includes/db.local.php` with production credentials.
+5. Set upload folder ownership to the web server user.
+6. Enable HTTPS with Certbot or another TLS provider.
+7. Configure PHP upload limits according to your document size requirements.
+8. Configure SMTP and set `ISU_EMAIL_ENABLED=1` only after mail is tested.
+9. Review production security settings before exposing real student data.
 
 ## GitHub Notes
 

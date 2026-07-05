@@ -43,6 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     try {
+        require_csrf();
 
         // -----------------------------
         // Update contact info (email, phone)
@@ -75,6 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
 
             $success = "Contact information updated successfully.";
+            log_audit($conn, 'student_updated_settings', 'student', $student_id, 'Student updated contact information.');
         }
 
         // -----------------------------
@@ -124,6 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
 
             $success = "Password changed successfully.";
+            log_audit($conn, 'student_changed_password', 'student', $student_id, 'Student changed password.');
         }
 
     } catch (Throwable $e) {
@@ -186,6 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="card-header fw-semibold">Update Contact Information</div>
         <div class="card-body">
             <form method="post" class="row g-3">
+                <?php echo csrf_field(); ?>
                 <input type="hidden" name="action" value="update_contact">
 
                 <div class="col-md-6">
@@ -222,6 +226,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="card-header fw-semibold">Change Password</div>
         <div class="card-body">
             <form method="post" class="row g-3">
+                <?php echo csrf_field(); ?>
                 <input type="hidden" name="action" value="change_password">
 
                 <div class="col-md-4">

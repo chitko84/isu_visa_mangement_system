@@ -121,6 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 
             if ($stmt->affected_rows > 0) {
                 $stmt->close();
+                log_audit($conn, 'deleted_student_record', 'student', $sid, 'Staff deleted student record.');
 
                 redirectTo(buildQueryString([
                     "q" => $q,
@@ -172,6 +173,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
                 $stmt->bind_param("ssssssii", $first, $last, $email, $phone, $status, $stype, $programId, $sid);
                 $stmt->execute();
                 $stmt->close();
+                log_audit($conn, 'updated_student_record', 'student', $sid, 'Staff updated student record.');
+                create_notification($conn, [
+                    'student_id' => $sid,
+                    'title' => 'Student record updated',
+                    'message' => 'Your student record was updated by ISSU staff.',
+                    'type' => 'student_record_update',
+                ]);
 
                 redirectTo(buildQueryString([
                     "q" => $q,

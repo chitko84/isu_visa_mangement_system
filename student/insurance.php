@@ -85,6 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = trim((string)($_POST['action'] ?? ''));
 
     try {
+        require_csrf();
         if ($action === 'submit_claim') {
             $policy_id = (int)($_POST['policy_id'] ?? 0);
             $amount    = (float)($_POST['claim_amount'] ?? 0);
@@ -109,6 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($newId === null || strtoupper((string)$newId) === 'NULL' || (string)$newId === '') $newId = null;
 
             $msg = "Claim submitted successfully" . ($newId ? " (Claim ID: " . (string)$newId . ")." : ".");
+            notify_staff($conn, 'Insurance claim submitted', "Student {$student_id} submitted an insurance claim.", 'insurance_claim_submitted');
+            log_audit($conn, 'student_submitted_insurance_claim', 'insurance_claim', $newId ? (int)$newId : null, 'Student submitted insurance claim.');
             redirectTo("insurance.php?msg=" . urlencode($msg));
         }
 
@@ -154,6 +157,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $msg = "Renewal request submitted successfully" . ($newId ? " (Renewal ID: " . (string)$newId . ")." : ".");
             $msg .= " Please wait for staff/admin review (Pending).";
+            notify_staff($conn, 'Insurance renewal submitted', "Student {$student_id} submitted an insurance renewal request.", 'insurance_renewal_submitted');
+            log_audit($conn, 'student_submitted_insurance_renewal', 'insurance_renewal_record', $newId ? (int)$newId : null, 'Student submitted insurance renewal.');
             redirectTo("insurance.php?msg=" . urlencode($msg));
         }
 
@@ -385,6 +390,7 @@ $hasPolicy = !empty($policyLatest);
                         <div class="mb-4">
                             <h6 class="fw-bold mb-2"><i class="bi bi-arrow-repeat me-1"></i> Submit Renewal Form</h6>
                             <form method="post" class="row g-2">
+                                <?php echo csrf_field(); ?>
                                 <input type="hidden" name="action" value="submit_renewal">
 
                                 <div class="col-md-5">
@@ -425,6 +431,7 @@ $hasPolicy = !empty($policyLatest);
                         <div>
                             <h6 class="fw-bold mb-2"><i class="bi bi-receipt me-1"></i> Submit Insurance Claim</h6>
                             <form method="post" class="row g-2">
+                                <?php echo csrf_field(); ?>
                                 <input type="hidden" name="action" value="submit_claim">
 
                                 <div class="col-md-5">

@@ -43,6 +43,7 @@ $error   = trim($_GET['error'] ?? '');
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'run_visa_reminders') {
     try {
+        require_csrf();
         if (($role ?? 'staff') !== 'admin') {
             throw new RuntimeException("Only admin can run reminders.");
         }
@@ -54,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'run_v
         clearStoredResults($conn);
 
         $success = "Visa expiry reminders generated successfully.";
+        log_audit($conn, 'ran_visa_expiry_reminders', 'reminder_queue', null, 'Generated visa expiry reminders.');
     } catch (Throwable $e) {
         $error = "Failed to run reminders: " . $e->getMessage();
         clearStoredResults($conn);
@@ -236,6 +238,7 @@ try {
         <div class="d-flex gap-2 align-items-center">
             <?php if (($role ?? 'staff') === 'admin'): ?>
                 <form method="post" class="m-0" onsubmit="return confirm('Run visa expiry reminders now?');">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="run_visa_reminders">
                     <button class="btn btn-outline-primary">
                         <i class="bi bi-bell"></i> Run Visa Reminders

@@ -33,6 +33,23 @@ $offset = ($page - 1) * $limit;
 $rows = [];
 $total = 0;
 $error = "";
+$success = "";
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        require_csrf();
+        $action = trim($_POST['action'] ?? '');
+        if ($action === 'mark_staff_all_read' && db_has_column($conn, 'notifications', 'staff_id')) {
+            $stmt = $conn->prepare("UPDATE notifications SET is_read = 1 WHERE staff_id = ? AND COALESCE(is_read,0) = 0");
+            $stmt->bind_param("i", $staff_id);
+            $stmt->execute();
+            $stmt->close();
+            $success = "Your notifications were marked as read.";
+        }
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+    }
+}
 
 // ------------------------------------------------------------
 // Build query (NO procedures - simple select)
@@ -173,6 +190,17 @@ function buildUrl(array $overrides = []): string {
 
     <?php if ($error): ?>
         <div class="alert alert-danger"><?php echo h($error); ?></div>
+    <?php endif; ?>
+    <?php if ($success): ?>
+        <div class="alert alert-success"><?php echo h($success); ?></div>
+    <?php endif; ?>
+
+    <?php if (db_has_column($conn, 'notifications', 'staff_id')): ?>
+        <form method="post" class="mb-3">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="action" value="mark_staff_all_read">
+            <button class="btn btn-outline-primary btn-sm">Mark my staff notifications as read</button>
+        </form>
     <?php endif; ?>
 
     <div class="card shadow-sm mb-3">
