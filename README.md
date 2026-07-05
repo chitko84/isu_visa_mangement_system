@@ -930,38 +930,6 @@ staff/reports.php
 
 Reports help staff monitor expiring visas, insurance deadlines, pending passport collection, and exit cases.
 
-## Screenshots
-
-Screenshots are not included in this repository yet. Add real screenshots later after running the system locally.
-
-### Home Page
-
-Placeholder for a real home page screenshot.
-
-### Student Dashboard
-
-Placeholder for a real student dashboard screenshot.
-
-### Staff Dashboard
-
-Placeholder for a real staff dashboard screenshot.
-
-### Visa Management
-
-Placeholder for a real visa management screenshot.
-
-### Visa Renewal
-
-Placeholder for a real visa renewal screenshot.
-
-### Insurance Management
-
-Placeholder for a real insurance management screenshot.
-
-### Exit Management
-
-Placeholder for a real exit management screenshot.
-
 ## Project Status
 
 This is an academic/student management system project and is actively improved. The current version is suitable for local development, demonstrations, academic review, and portfolio presentation. Before real production use, it should receive a full security review, deployment review, and privacy review.
