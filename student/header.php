@@ -1,16 +1,8 @@
 <?php
 // student/header.php
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'student') {
-    header("Location: ../login.php");
-    exit();
-}
-
-require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/functions.php';
+require_role(['student']);
 
 $student_id = (int)$_SESSION['user_id'];
 

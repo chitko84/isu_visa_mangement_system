@@ -1,17 +1,8 @@
 <?php
 // staff/header.php
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-// Allow staff + admin only
-if (!isset($_SESSION['user_id']) || !in_array(($_SESSION['role'] ?? ''), ['staff', 'admin'], true)) {
-    header("Location: ../login.php");
-    exit();
-}
-
-require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/functions.php';
+require_role(['staff', 'admin']);
 
 $staff_id = (int)$_SESSION['user_id'];
 $role = $_SESSION['role'] ?? 'staff';

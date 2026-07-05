@@ -2,15 +2,8 @@
 // staff/visa_renewal.php
 // Visa Renewal Processing (Staff) + DELETE application (with Bootstrap modal)
 
-if (session_status() === PHP_SESSION_NONE) session_start();
-
-// Auth
-if (!isset($_SESSION['user_id']) || !in_array(($_SESSION['role'] ?? ''), ['staff','admin'], true)) {
-    header("Location: ../login.php");
-    exit();
-}
-
-require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/functions.php';
+require_role(['staff', 'admin']);
 
 // ------------------------------------------------------------
 // Helpers

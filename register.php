@@ -1,6 +1,6 @@
 <?php
-session_start();
-require_once 'includes/db.php';
+require_once __DIR__ . '/includes/functions.php';
+secure_session_start();
 
 // If already logged in
 if (isset($_SESSION['user_id'])) {
@@ -108,14 +108,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         try {
             // Insert student
+            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+
             $student_sql = "
-                INSERT INTO student (student_id, program_id, first_name, last_name, phone, email, status, student_type)
-                VALUES (?, ?, ?, ?, ?, ?, 'Active', ?)
+                INSERT INTO student (student_id, program_id, first_name, last_name, phone, email, status, student_type, password)
+                VALUES (?, ?, ?, ?, ?, ?, 'Active', ?, ?)
             ";
             $stmt = $conn->prepare($student_sql);
-            $stmt->bind_param("iisssss", $student_id, $program_id, $first_name, $last_name, $phone, $email, $student_type);
+            $stmt->bind_param("iissssss", $student_id, $program_id, $first_name, $last_name, $phone, $email, $student_type, $hashed_password);
             if (!$stmt->execute()) {
-                throw new Exception("Failed to create student record: " . $stmt->error);
+                throw new Exception("Failed to create student record.");
             }
             $stmt->close();
 
@@ -127,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $conn->prepare($nat_sql);
             $stmt->bind_param("ii", $student_id, $nationality_id);
             if (!$stmt->execute()) {
-                throw new Exception("Failed to add nationality: " . $stmt->error);
+                throw new Exception("Failed to add nationality.");
             }
             $stmt->close();
 
@@ -142,7 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $conn->prepare($visa_sql);
                 $stmt->bind_param("iis", $visa_id, $student_id, $passport_no);
                 if (!$stmt->execute()) {
-                    throw new Exception("Failed to create visa record: " . $stmt->error);
+                    throw new Exception("Failed to create visa record.");
                 }
                 $stmt->close();
             }
@@ -172,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if (!$stmt->execute()) {
-                throw new Exception("Failed to add student subtype: " . $stmt->error);
+                throw new Exception("Failed to add student subtype.");
             }
             $stmt->close();
 
@@ -182,7 +184,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         } catch (Exception $e) {
             $conn->rollback();
-            $error = "Registration failed: " . $e->getMessage();
+            error_log("Registration failed: " . $e->getMessage());
+            $error = "Registration failed. Please check your details and try again.";
         }
     }
 }

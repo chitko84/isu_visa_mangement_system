@@ -1,9 +1,6 @@
 <?php
-// Start session
-session_start();
-
-// Include database connection
-require_once 'includes/db.php';
+require_once __DIR__ . '/includes/functions.php';
+secure_session_start();
 
 // Check if already logged in
 if (isset($_SESSION['user_id'])) {
@@ -18,8 +15,8 @@ if (isset($_SESSION['user_id'])) {
 // Handle login form submission
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email = trim($_POST['email']);
-    $password = $_POST['password'];
+    $email = trim($_POST['email'] ?? '');
+    $password = (string)($_POST['password'] ?? '');
     $role = isset($_POST['role']) ? trim($_POST['role']) : '';
     
     if (empty($email) || empty($password) || empty($role)) {
@@ -41,30 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     // Check if student has a password set
                     if (empty($student['password'])) {
-                        // First-time login or password not set
-                        // Hash and save the provided password
-                        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                        $update_query = "UPDATE student SET password = ? WHERE email = ?";
-                        $update_stmt = $conn->prepare($update_query);
-                        $update_stmt->bind_param("ss", $hashed_password, $email);
-                        $update_stmt->execute();
-                        
-                        // Now verify with the newly hashed password
-                        if (password_verify($password, $hashed_password)) {
-                            // Set session variables
-                            $_SESSION['user_id'] = $student['student_id'];
-                            $_SESSION['email'] = $student['email'];
-                            $_SESSION['full_name'] = $student['first_name'] . ' ' . $student['last_name'];
-                            $_SESSION['role'] = 'student';
-                            $_SESSION['program_id'] = $student['program_id'];
-                            
-                            // Redirect to student dashboard
-                            header("Location: student/dashboard.php");
-                            exit();
-                        } else {
-                            $error = "Error setting up your account. Please try again.";
-                        }
-                        $update_stmt->close();
+                        $error = "This account has no password set. Please contact ISSU staff.";
                     } else {
                         // Verify existing password
                         if (password_verify($password, $student['password'])) {
@@ -72,12 +46,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             if ($student['status'] != 'Active') {
                                 $error = "Your account is not active. Please contact support.";
                             } else {
-                                // Set session variables
+                                session_regenerate_id(true);
                                 $_SESSION['user_id'] = $student['student_id'];
                                 $_SESSION['email'] = $student['email'];
                                 $_SESSION['full_name'] = $student['first_name'] . ' ' . $student['last_name'];
                                 $_SESSION['role'] = 'student';
                                 $_SESSION['program_id'] = $student['program_id'];
+                                $_SESSION['login_time'] = time();
                                 
                                 // Redirect to student dashboard
                                 header("Location: student/dashboard.php");
@@ -111,29 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     // Check if staff has a password set
                     if (empty($staff['password'])) {
-                        // First-time login or password not set
-                        // Hash and save the provided password
-                        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                        $update_query = "UPDATE staff SET password = ? WHERE email = ?";
-                        $update_stmt = $conn->prepare($update_query);
-                        $update_stmt->bind_param("ss", $hashed_password, $email);
-                        $update_stmt->execute();
-                        
-                        // Now verify with the newly hashed password
-                        if (password_verify($password, $hashed_password)) {
-                            // Set session variables
-                            $_SESSION['user_id'] = $staff['staff_id'];
-                            $_SESSION['email'] = $staff['email'];
-                            $_SESSION['full_name'] = $staff['first_name'] . ' ' . $staff['last_name'];
-                            $_SESSION['role'] = $staff['role'];
-                            
-                            // Redirect to staff dashboard
-                            header("Location: staff/dashboard.php");
-                            exit();
-                        } else {
-                            $error = "Error setting up your account. Please try again.";
-                        }
-                        $update_stmt->close();
+                        $error = "This account has no password set. Please contact the administrator.";
                     } else {
                         // Verify existing password
                         if (password_verify($password, $staff['password'])) {
@@ -141,11 +94,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             if (isset($staff['status']) && $staff['status'] != 'Active') {
                                 $error = "Your account is not active. Please contact administrator.";
                             } else {
-                                // Set session variables
+                                session_regenerate_id(true);
                                 $_SESSION['user_id'] = $staff['staff_id'];
                                 $_SESSION['email'] = $staff['email'];
                                 $_SESSION['full_name'] = $staff['first_name'] . ' ' . $staff['last_name'];
                                 $_SESSION['role'] = $staff['role'];
+                                $_SESSION['login_time'] = time();
                                 
                                 // Redirect to staff dashboard
                                 header("Location: staff/dashboard.php");
@@ -564,6 +518,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     Your session has expired. Please login again.
                 </div>
             <?php endif; ?>
+            <?php if(isset($_GET['unauthorized']) && $_GET['unauthorized'] == '1'): ?>
+                <div class="alert alert-warning alert-custom">
+                    <i class="bi bi-shield-exclamation me-2"></i>
+                    Please login with an account that has permission to open that page.
+                </div>
+            <?php endif; ?>
             
             <form method="POST" action="" id="loginForm">
                 <div class="mb-3">
@@ -622,7 +582,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
                 
                 <div class="text-center mt-3">
-                    <a href="forgot-password.php" class="text-decoration-none small" data-i18n="forgot_password">Forgot your password?</a>
+                    <span class="text-muted small" data-i18n="forgot_password">Forgot your password? Please contact ISSU staff.</span>
                 </div>
             </form>
             

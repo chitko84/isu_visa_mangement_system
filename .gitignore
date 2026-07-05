@@ -1,3 +1,12 @@
-staff/uploads/profile/* 
-student/uploads/profile/* 
-uploads/visa_documents/* 
+staff/uploads/profile/*
+!staff/uploads/profile/.gitkeep
+student/uploads/profile/*
+!student/uploads/profile/.gitkeep
+uploads/visa_documents/*
+!uploads/visa_documents/.gitkeep
+uploads/profile/*
+!uploads/profile/.gitkeep
+uploads/documents/*
+!uploads/documents/.gitkeep
+uploads/insurance_claims/*
+!uploads/insurance_claims/.gitkeep

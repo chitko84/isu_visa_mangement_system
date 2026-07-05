@@ -1,34 +1,10 @@
 <?php
-// staff/logout.php
-
-// Start session if not already started
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-// Unset all session variables
-$_SESSION = [];
-
-// Destroy the session
-session_destroy();
-
-// Remove session cookie (important for full logout)
-if (ini_get("session.use_cookies")) {
-    $params = session_get_cookie_params();
-    setcookie(
-        session_name(),
-        '',
-        time() - 42000,
-        $params['path'],
-        $params['domain'],
-        $params['secure'],
-        $params['httponly']
-    );
-}
+require_once __DIR__ . '/../includes/functions.php';
+destroy_session();
 
 // Redirect to staff login page
 // Use header if possible, otherwise JS fallback
-$loginPage = "../login.php";
+$loginPage = "../login.php?logout=true";
 
 if (!headers_sent()) {
     header("Location: " . $loginPage);
